@@ -10,10 +10,10 @@ const VIEWPORT_METHOD = "fiducial";
 const FIDUCIAL_SIZE = 16; // px, width and height
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
-const CHROME_TOP = 96;
-const CHROME_BOTTOM = 40;
-const CHROME_RIGHT = 16;
-const CHROME_LEFT = 16;
+const CHROME_TOP = 128;
+const CHROME_BOTTOM = 64;
+const CHROME_RIGHT = 48;
+const CHROME_LEFT = 48;
 
 let isPlaying = false;
 let displayX = 0;
@@ -57,57 +57,53 @@ function walkToCorner(data, vw, vh, x, y, testFn) {
   return { x, y };
 }
 
-// Find the viewport by checking fiducials at the expected position.
-// Uses screenX/Y as a hint, finds a matching pixel, then walks to exact edges.
+// Scan the full frame for yellow fiducial, walk to exact corner,
+// then cross-check green at the expected distance.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
   const imageData = snapCtx.getImageData(0, 0, vw, vh);
   const data = imageData.data;
-
-  // Build list of candidate viewport positions to check.
-  const candidates = [];
-
-  // 1. Previous frame position (most likely).
-  if (lastViewportPx) {
-    candidates.push(lastViewportPx);
-  }
-
-  // 2. screenX/Y hint.
-  const chromeHeight = window.outerHeight - window.innerHeight;
-  const hintX = Math.round(window.screenX * dpr);
-  const hintY = Math.round((window.screenY + chromeHeight) * dpr);
-  candidates.push({ x: hintX, y: hintY });
-
-  // 3. Search nearby offsets around each candidate for a yellow pixel.
-  const margin = Math.round(100 * dpr);
-  const step = Math.round(4 * dpr);
   const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
 
-  for (const base of candidates) {
-    for (let dy = -margin; dy <= margin; dy += step) {
-      for (let dx = -margin; dx <= margin; dx += step) {
-        const sx = base.x + dx;
-        const sy = base.y + dy;
-        if (sx < 0 || sx >= vw || sy < 0 || sy >= vh) continue;
-
-        const i = (sy * vw + sx) * 4;
-        if (!isYellowPixel(data, i)) continue;
-
-        // Found a yellow pixel — walk to exact top-left corner.
-        const yellow = walkToCorner(data, vw, vh, sx, sy, isYellowPixel);
-
-        // Cross-check: green should be at top-right of viewport.
-        // Sample a point inside where green fiducial should be.
+  // Fast path: check cached position first (center of previous yellow).
+  if (lastViewportPx) {
+    const cx = lastViewportPx.x + Math.round(sizePx / 2);
+    const cy = lastViewportPx.y + Math.round(sizePx / 2);
+    if (cx >= 0 && cx < vw && cy >= 0 && cy < vh) {
+      const ci = (cy * vw + cx) * 4;
+      if (isYellowPixel(data, ci)) {
+        const yellow = walkToCorner(data, vw, vh, cx, cy, isYellowPixel);
         const greenProbeX = yellow.x + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
         const greenProbeY = yellow.y + Math.round(sizePx / 2);
-        if (greenProbeX < 0 || greenProbeX >= vw || greenProbeY < 0 || greenProbeY >= vh) continue;
-
-        const gi = (greenProbeY * vw + greenProbeX) * 4;
-        if (!isGreenPixel(data, gi)) continue;
-
-        lastViewportPx = { x: yellow.x, y: yellow.y };
-        return { x: yellow.x / dpr, y: yellow.y / dpr };
+        if (greenProbeX >= 0 && greenProbeX < vw && greenProbeY >= 0 && greenProbeY < vh) {
+          if (isGreenPixel(data, (greenProbeY * vw + greenProbeX) * 4)) {
+            lastViewportPx = { x: yellow.x, y: yellow.y };
+            return { x: yellow.x / dpr, y: yellow.y / dpr };
+          }
+        }
       }
     }
+  }
+
+  // Full frame scan. Stride = half fiducial pixel size guarantees a hit.
+  const stride = Math.max(1, Math.floor(sizePx / 2));
+  for (let i = 0; i < data.length; i += 4 * stride) {
+    if (!isYellowPixel(data, i)) continue;
+
+    const hitX = (i / 4) % vw;
+    const hitY = Math.floor(i / 4 / vw);
+
+    // Walk to exact top-left corner.
+    const yellow = walkToCorner(data, vw, vh, hitX, hitY, isYellowPixel);
+
+    // Cross-check: green should be near top-right of viewport.
+    const greenProbeX = yellow.x + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
+    const greenProbeY = yellow.y + Math.round(sizePx / 2);
+    if (greenProbeX < 0 || greenProbeX >= vw || greenProbeY < 0 || greenProbeY >= vh) continue;
+
+    if (!isGreenPixel(data, (greenProbeY * vw + greenProbeX) * 4)) continue;
+
+    lastViewportPx = { x: yellow.x, y: yellow.y };
+    return { x: yellow.x / dpr, y: yellow.y / dpr };
   }
 
   lastViewportPx = null;
