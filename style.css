@@ -6,6 +6,7 @@ html {
 }
 
 body {
+  background: black;
   font:
     14px "Open Sans",
     "Arial",
@@ -21,6 +22,7 @@ video {
 canvas {
   height: 100vh;
   width: 100vw;
+  cursor: pointer;
 }
 
 canvas.filter {
@@ -30,9 +32,10 @@ canvas.filter {
 .fiducial {
   position: fixed;
   top: 0;
-  height: 32px;
-  width: 32px;
+  height: 8px;
+  width: 50%;
   z-index: 1000;
+  pointer-events: none;
 }
 
 .fiducial-left {
@@ -43,8 +46,4 @@ canvas.filter {
 .fiducial-right {
   right: 0;
   background-color: #ff00ff;
-}
-
-canvas.buffer {
-  display: none;
 }

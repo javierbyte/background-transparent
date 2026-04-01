@@ -1,27 +1,97 @@
 const videoEl = document.querySelector("video");
 const canvasEl = document.querySelector("canvas.draw");
-const canvasBufferEl = document.querySelector("canvas.buffer");
+
+// --- Viewport detection method ---
+// "fiducial" — scan screen capture for colour markers (accurate, ~1 frame lag)
+// "screenXY"  — use window.screenX / screenY browser APIs (instant, ~15 Hz update)
+// const VIEWPORT_METHOD = "screenXY";
+const VIEWPORT_METHOD = "fiducial";
+
+const FIDUCIAL_HEIGHT = 8;
+const FIDUCIAL_WIDTH_PCT = 0.5; // fraction of viewport width
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
-const CHROME_TOP = 64;
-const CHROME_BOTTOM = 32;
-const CHROME_RIGHT = 20;
-const CHROME_LEFT = 20;
-
-const FIDUCIAL_SIZE = 32;
-
-// Lerp factor per frame (0 = no movement, 1 = instant snap).
-const SMOOTHING = 0.3;
+const CHROME_TOP = 96;
+const CHROME_BOTTOM = 40;
+const CHROME_RIGHT = 16;
+const CHROME_LEFT = 16;
 
 let isPlaying = false;
 let displayX = 0;
 let displayY = 0;
-let hasDisplay = false;
+
+// ---------------------------------------------------------------------------
+// Fiducial injection (only when using fiducial method)
+// ---------------------------------------------------------------------------
+if (VIEWPORT_METHOD === "fiducial") {
+  const leftFid = document.createElement("div");
+  leftFid.className = "fiducial fiducial-left";
+  document.body.appendChild(leftFid);
+
+  const rightFid = document.createElement("div");
+  rightFid.className = "fiducial fiducial-right";
+  document.body.appendChild(rightFid);
+}
+
+// ---------------------------------------------------------------------------
+// Viewport position strategies
+// ---------------------------------------------------------------------------
+
+// Scan the screen-capture frame for a yellow/magenta fiducial marker and
+// return the viewport top-left in CSS pixels, or null if not found.
+function findViewportFiducial(snapCtx, vw, vh, dpr) {
+  const imageData = snapCtx.getImageData(0, 0, vw, vh);
+  const data = imageData.data;
+  // The strips are 50% of screen width, so a stride of ~25% guarantees a hit.
+  const stride = Math.max(1, Math.floor(vw * 0.25));
+  const fiducialWidthCSS = window.innerWidth * FIDUCIAL_WIDTH_PCT;
+
+  for (let i = 0; i < data.length; i += 4 * stride) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // Relaxed thresholds for Safari color management
+    const isYellow = r > 180 && g > 180 && b < 80;
+    const isMagenta = r > 180 && g < 80 && b > 180;
+    if (!isYellow && !isMagenta) continue;
+
+    const hitX = (i / 4) % vw;
+    const hitY = Math.floor(i / 4 / vw);
+    const corner = refineFiducial(data, vw, vh, hitX, hitY, r, g, b);
+    if (!corner) continue;
+
+    const y = corner[1] / dpr;
+    const x = isYellow
+      ? corner[0] / dpr
+      : corner[0] / dpr - window.innerWidth + fiducialWidthCSS;
+    return { x, y };
+  }
+  return null;
+}
+
+// Use the browser's window-position APIs to derive the viewport top-left
+// in CSS pixels.  Instant but updates at a lower frequency (~15 Hz).
+// NOTE: only accurate when the browser is on the captured display.
+function findViewportScreenXY() {
+  const chromeHeight = window.outerHeight - window.innerHeight;
+  return {
+    x: window.screenX,
+    y: window.screenY + chromeHeight,
+  };
+}
+
+// Dispatcher — calls the strategy selected by VIEWPORT_METHOD.
+function findViewportPosition(snapCtx, vw, vh, dpr) {
+  if (VIEWPORT_METHOD === "screenXY") {
+    return findViewportScreenXY();
+  }
+  return findViewportFiducial(snapCtx, vw, vh, dpr);
+}
 
 // Check if the pixel at (x, y) in the image data matches the given color.
 function pixelMatches(data, width, x, y, targetR, targetG, targetB) {
   const i = (y * width + x) * 4;
-  const allowedError = 2;
+  const allowedError = 30;
   return (
     Math.abs(data[i] - targetR) < allowedError &&
     Math.abs(data[i + 1] - targetG) < allowedError &&
@@ -32,43 +102,40 @@ function pixelMatches(data, width, x, y, targetR, targetG, targetB) {
 // Given a candidate pixel inside a fiducial, find the exact top-left corner
 // by walking left and up to the edge, then verify the expected size.
 // Returns [x, y] in full video-pixel coords, or null if validation fails.
-function refineFiducial(data, scaledWidth, scaledHeight, hitX, hitY, r, g, b) {
-  // Walk left to find the left edge.
+function refineFiducial(data, width, height, hitX, hitY, r, g, b) {
   let left = hitX;
-  while (left > 0 && pixelMatches(data, scaledWidth, left - 1, hitY, r, g, b)) {
+  while (left > 0 && pixelMatches(data, width, left - 1, hitY, r, g, b)) {
     left--;
   }
-  // Walk up to find the top edge.
   let top = hitY;
-  while (top > 0 && pixelMatches(data, scaledWidth, left, top - 1, r, g, b)) {
+  while (top > 0 && pixelMatches(data, width, left, top - 1, r, g, b)) {
     top--;
   }
 
   // Measure the width and height from the top-left corner.
-  const expectedSize = Math.round(FIDUCIAL_SIZE / 4);
-  const minSize = expectedSize - 2;
+  const minW = Math.floor(width * FIDUCIAL_WIDTH_PCT * 0.5); // at least half expected width
+  const minH = 1;
   let w = 0;
   while (
-    left + w < scaledWidth &&
-    pixelMatches(data, scaledWidth, left + w, top, r, g, b)
+    left + w < width &&
+    pixelMatches(data, width, left + w, top, r, g, b)
   ) {
     w++;
   }
   let h = 0;
   while (
-    top + h < scaledHeight &&
-    pixelMatches(data, scaledWidth, left, top + h, r, g, b)
+    top + h < height &&
+    pixelMatches(data, width, left, top + h, r, g, b)
   ) {
     h++;
   }
 
-  if (w < minSize || h < minSize) return null;
+  if (w < minW || h < minH) return null;
 
-  // Return top-left in full video-pixel coordinates.
-  return [left * 4, top * 4];
+  return [left, top];
 }
 
-canvasEl.addEventListener(
+document.body.addEventListener(
   "click",
   function () {
     if (isPlaying) {
@@ -86,7 +153,6 @@ canvasEl.addEventListener(
         videoEl.srcObject = stream;
         videoEl.play();
         const ctx = canvasEl.getContext("2d");
-        const ctxBuffer = canvasBufferEl.getContext("2d");
 
         // Offscreen canvas to snapshot each video frame, so detection and
         // painting always use the exact same frame. Without this, a live
@@ -95,6 +161,12 @@ canvasEl.addEventListener(
         const snapCtx = snapCanvas.getContext("2d");
 
         function render() {
+          // Wait until the video has actual frame data.
+          if (videoEl.videoWidth === 0 || videoEl.readyState < 2) {
+            requestAnimationFrame(render);
+            return;
+          }
+
           // Derive the capture scale from actual video size vs screen size.
           // Chrome captures at native resolution (dpr×), Safari captures at 1×.
           const dpr =
@@ -118,104 +190,43 @@ canvasEl.addEventListener(
           }
           snapCtx.drawImage(videoEl, 0, 0);
 
-          // Resize the detection buffer (1/4 scale for speed).
-          const scaledWidth = Math.ceil(videoEl.videoWidth / 4);
-          const scaledHeight = Math.ceil(videoEl.videoHeight / 4);
-          if (scaledWidth !== canvasBufferEl.width) {
-            canvasBufferEl.width = scaledWidth;
-            canvasBufferEl.height = scaledHeight;
-          }
-
-          // --- Step 2: Locate a fiducial in the screen capture ---
-          // Left fiducial (yellow #ffff00) is at viewport (0, 0).
-          // Right fiducial (magenta #ff00ff) is at viewport (innerWidth - 32, 0).
-          // Either one is enough to determine the viewport position.
-          // After finding a candidate pixel, we refine to the exact top-left
-          // corner and validate the expected size.
-          let detectedX = undefined;
-          let detectedY = undefined;
+          // --- Step 2: Find the viewport position ---
+          const vw = videoEl.videoWidth;
+          const vh = videoEl.videoHeight;
+          let viewport = null;
           try {
-            ctxBuffer.drawImage(snapCanvas, 0, 0, scaledWidth, scaledHeight);
-            const imageData = ctxBuffer.getImageData(
-              0,
-              0,
-              scaledWidth,
-              scaledHeight,
-            );
-            const data = imageData.data;
-            const scaledStride = Math.max(1, Math.floor(FIDUCIAL_SIZE / 4));
-            const allowedError = 2;
-            for (let i = 0; i < data.length; i += 4 * scaledStride) {
-              const r = data[i];
-              const g = data[i + 1];
-              const b = data[i + 2];
-              const isYellow =
-                r > 255 - allowedError &&
-                g > 255 - allowedError &&
-                b < allowedError;
-              const isMagenta =
-                r > 255 - allowedError &&
-                g < allowedError &&
-                b > 255 - allowedError;
-              if (!isYellow && !isMagenta) continue;
-
-              const hitX = (i / 4) % scaledWidth;
-              const hitY = Math.floor(i / 4 / scaledWidth);
-              const color = isYellow ? [255, 255, 0] : [255, 0, 255];
-              const corner = refineFiducial(
-                data,
-                scaledWidth,
-                scaledHeight,
-                hitX,
-                hitY,
-                color[0],
-                color[1],
-                color[2],
-              );
-              if (!corner) continue;
-
-              detectedY = corner[1] / dpr;
-              if (isYellow) {
-                detectedX = corner[0] / dpr;
-              } else {
-                detectedX = corner[0] / dpr - window.innerWidth + FIDUCIAL_SIZE;
-              }
-              break;
-            }
+            viewport = findViewportPosition(snapCtx, vw, vh, dpr);
           } catch (e) {
             console.error(e);
           }
 
-          if (detectedX === undefined) {
+          if (!viewport) {
             requestAnimationFrame(render);
             return;
           }
 
-          // Smooth the display position with lerp.
-          if (!hasDisplay) {
-            displayX = detectedX;
-            displayY = detectedY;
-            hasDisplay = true;
-          } else {
-            displayX += (detectedX - displayX) * SMOOTHING;
-            displayY += (detectedY - displayY) * SMOOTHING;
-          }
+          displayX += (viewport.x - displayX) * 0.5;
+          displayY += (viewport.y - displayY) * 0.5;
 
-          // --- Step 3 & 4: Cut the browser window out of the buffer ---
-          const holeX = (detectedX - CHROME_LEFT) * dpr;
-          const holeY = (detectedY - CHROME_TOP) * dpr;
-          const holeWidth =
-            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
-          const holeHeight =
-            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
+          // --- Step 3: Draw the capture, cutting out the browser window  ---
+          // The hole covers the viewport plus browser chrome so the
+          // captured browser window is removed from the canvas.
+          const holeX = (viewport.x - CHROME_LEFT) * dpr;
+          const holeY = (viewport.y - CHROME_TOP) * dpr;
+          const holeW = (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
+          const holeH = (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
 
-          // Draw the video frame but clip out the hole.
           ctx.save();
           ctx.beginPath();
           ctx.rect(0, 0, canvasEl.width, holeY);
-          ctx.rect(0, holeY, holeX, holeHeight);
-          ctx.rect(holeX + holeWidth, holeY, canvasEl.width, holeHeight);
-          ctx.rect(0, holeY + holeHeight, canvasEl.width, canvasEl.height);
+          ctx.rect(0, holeY, holeX, holeH);
+          ctx.rect(holeX + holeW, holeY, canvasEl.width - holeX - holeW, holeH);
+          ctx.rect(
+            0,
+            holeY + holeH,
+            canvasEl.width,
+            canvasEl.height - holeY - holeH,
+          );
           ctx.clip();
           ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
           ctx.drawImage(snapCanvas, 0, 0);
@@ -227,6 +238,10 @@ canvasEl.addEventListener(
           requestAnimationFrame(render);
         }
         render();
+      })
+      .catch((err) => {
+        console.error("getDisplayMedia failed:", err);
+        isPlaying = false;
       });
   },
   false,
