@@ -45,21 +45,3 @@ canvas.filter {
   filter: invert(1) contrast(2) sepia(1);
 }
 
-.fiducial {
-  position: fixed;
-  top: 0;
-  height: 8px;
-  width: 50%;
-  z-index: 1000;
-  pointer-events: none;
-}
-
-.fiducial-left {
-  left: 0;
-  background-color: #ffff00;
-}
-
-.fiducial-right {
-  right: 0;
-  background-color: #ff00ff;
-}

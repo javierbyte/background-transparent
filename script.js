@@ -7,8 +7,7 @@ const canvasEl = document.querySelector("canvas.draw");
 // const VIEWPORT_METHOD = "screenXY";
 const VIEWPORT_METHOD = "fiducial";
 
-const FIDUCIAL_HEIGHT = 8;
-const FIDUCIAL_WIDTH_PCT = 0.5; // fraction of viewport width
+const FIDUCIAL_SIZE = 16; // px, width and height
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 96;
@@ -20,16 +19,21 @@ let isPlaying = false;
 let displayX = 0;
 let displayY = 0;
 
+// Cached viewport position from previous frame (pixel coords).
+let lastViewportPx = null; // { x, y } in video pixels
+
 // ---------------------------------------------------------------------------
 // Fiducial injection (only when using fiducial method)
 // ---------------------------------------------------------------------------
 if (VIEWPORT_METHOD === "fiducial") {
+  const fidStyle =
+    "position:fixed;top:0;width:16px;height:16px;z-index:1000;pointer-events:none;";
   const leftFid = document.createElement("div");
-  leftFid.className = "fiducial fiducial-left";
+  leftFid.style.cssText = fidStyle + "left:0;background:#ffff00;";
   document.body.appendChild(leftFid);
 
   const rightFid = document.createElement("div");
-  rightFid.className = "fiducial fiducial-right";
+  rightFid.style.cssText = fidStyle + "right:0;background:#00ff00;";
   document.body.appendChild(rightFid);
 }
 
@@ -37,102 +41,86 @@ if (VIEWPORT_METHOD === "fiducial") {
 // Viewport position strategies
 // ---------------------------------------------------------------------------
 
-// Scan the screen-capture frame for a yellow/magenta fiducial marker and
-// return the viewport top-left in CSS pixels, or null if not found.
+// Detect whether a pixel looks yellow or green, tolerant of color profiles.
+function isYellowPixel(data, i) {
+  return data[i] > 150 && data[i + 1] > 150 && data[i + 2] < 100;
+}
+function isGreenPixel(data, i) {
+  return data[i] < 100 && data[i + 1] > 150 && data[i + 2] < 100;
+}
+
+// Given a pixel at (x, y) that matches testFn, walk left and up to find
+// the exact top-left corner of the colored block.
+function walkToCorner(data, vw, vh, x, y, testFn) {
+  while (x > 0 && testFn(data, (y * vw + (x - 1)) * 4)) x--;
+  while (y > 0 && testFn(data, ((y - 1) * vw + x) * 4)) y--;
+  return { x, y };
+}
+
+// Find the viewport by checking fiducials at the expected position.
+// Uses screenX/Y as a hint, finds a matching pixel, then walks to exact edges.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
   const imageData = snapCtx.getImageData(0, 0, vw, vh);
   const data = imageData.data;
-  // The strips are 50% of screen width, so a stride of ~25% guarantees a hit.
-  const stride = Math.max(1, Math.floor(vw * 0.25));
-  const fiducialWidthCSS = window.innerWidth * FIDUCIAL_WIDTH_PCT;
 
-  for (let i = 0; i < data.length; i += 4 * stride) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    // Relaxed thresholds for Safari color management
-    const isYellow = r > 180 && g > 180 && b < 80;
-    const isMagenta = r > 180 && g < 80 && b > 180;
-    if (!isYellow && !isMagenta) continue;
+  // Build list of candidate viewport positions to check.
+  const candidates = [];
 
-    const hitX = (i / 4) % vw;
-    const hitY = Math.floor(i / 4 / vw);
-    const corner = refineFiducial(data, vw, vh, hitX, hitY, r, g, b);
-    if (!corner) continue;
-
-    const y = corner[1] / dpr;
-    const x = isYellow
-      ? corner[0] / dpr
-      : corner[0] / dpr - window.innerWidth + fiducialWidthCSS;
-    return { x, y };
+  // 1. Previous frame position (most likely).
+  if (lastViewportPx) {
+    candidates.push(lastViewportPx);
   }
-  return null;
-}
 
-// Use the browser's window-position APIs to derive the viewport top-left
-// in CSS pixels.  Instant but updates at a lower frequency (~15 Hz).
-// NOTE: only accurate when the browser is on the captured display.
-function findViewportScreenXY() {
+  // 2. screenX/Y hint.
   const chromeHeight = window.outerHeight - window.innerHeight;
-  return {
-    x: window.screenX,
-    y: window.screenY + chromeHeight,
-  };
+  const hintX = Math.round(window.screenX * dpr);
+  const hintY = Math.round((window.screenY + chromeHeight) * dpr);
+  candidates.push({ x: hintX, y: hintY });
+
+  // 3. Search nearby offsets around each candidate for a yellow pixel.
+  const margin = Math.round(100 * dpr);
+  const step = Math.round(4 * dpr);
+  const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
+
+  for (const base of candidates) {
+    for (let dy = -margin; dy <= margin; dy += step) {
+      for (let dx = -margin; dx <= margin; dx += step) {
+        const sx = base.x + dx;
+        const sy = base.y + dy;
+        if (sx < 0 || sx >= vw || sy < 0 || sy >= vh) continue;
+
+        const i = (sy * vw + sx) * 4;
+        if (!isYellowPixel(data, i)) continue;
+
+        // Found a yellow pixel — walk to exact top-left corner.
+        const yellow = walkToCorner(data, vw, vh, sx, sy, isYellowPixel);
+
+        // Cross-check: green should be at top-right of viewport.
+        // Sample a point inside where green fiducial should be.
+        const greenProbeX = yellow.x + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
+        const greenProbeY = yellow.y + Math.round(sizePx / 2);
+        if (greenProbeX < 0 || greenProbeX >= vw || greenProbeY < 0 || greenProbeY >= vh) continue;
+
+        const gi = (greenProbeY * vw + greenProbeX) * 4;
+        if (!isGreenPixel(data, gi)) continue;
+
+        lastViewportPx = { x: yellow.x, y: yellow.y };
+        return { x: yellow.x / dpr, y: yellow.y / dpr };
+      }
+    }
+  }
+
+  lastViewportPx = null;
+  return null;
 }
 
 // Dispatcher — calls the strategy selected by VIEWPORT_METHOD.
 function findViewportPosition(snapCtx, vw, vh, dpr) {
   if (VIEWPORT_METHOD === "screenXY") {
-    return findViewportScreenXY();
+    const chromeHeight = window.outerHeight - window.innerHeight;
+    return { x: window.screenX, y: window.screenY + chromeHeight };
   }
   return findViewportFiducial(snapCtx, vw, vh, dpr);
-}
-
-// Check if the pixel at (x, y) in the image data matches the given color.
-function pixelMatches(data, width, x, y, targetR, targetG, targetB) {
-  const i = (y * width + x) * 4;
-  const allowedError = 30;
-  return (
-    Math.abs(data[i] - targetR) < allowedError &&
-    Math.abs(data[i + 1] - targetG) < allowedError &&
-    Math.abs(data[i + 2] - targetB) < allowedError
-  );
-}
-
-// Given a candidate pixel inside a fiducial, find the exact top-left corner
-// by walking left and up to the edge, then verify the expected size.
-// Returns [x, y] in full video-pixel coords, or null if validation fails.
-function refineFiducial(data, width, height, hitX, hitY, r, g, b) {
-  let left = hitX;
-  while (left > 0 && pixelMatches(data, width, left - 1, hitY, r, g, b)) {
-    left--;
-  }
-  let top = hitY;
-  while (top > 0 && pixelMatches(data, width, left, top - 1, r, g, b)) {
-    top--;
-  }
-
-  // Measure the width and height from the top-left corner.
-  const minW = Math.floor(width * FIDUCIAL_WIDTH_PCT * 0.5); // at least half expected width
-  const minH = 1;
-  let w = 0;
-  while (
-    left + w < width &&
-    pixelMatches(data, width, left + w, top, r, g, b)
-  ) {
-    w++;
-  }
-  let h = 0;
-  while (
-    top + h < height &&
-    pixelMatches(data, width, left, top + h, r, g, b)
-  ) {
-    h++;
-  }
-
-  if (w < minW || h < minH) return null;
-
-  return [left, top];
 }
 
 const shareBtn = document.getElementById("share-btn");
