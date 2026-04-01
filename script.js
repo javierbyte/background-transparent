@@ -22,8 +22,8 @@ let isPlaying = false;
 let displayX = 0;
 let displayY = 0;
 
-// Cached viewport position from previous frame (pixel coords).
-let lastViewportPx = null; // { x, y, marker: "left"|"right" } in video pixels
+// Cached marker position from previous frame (video pixels).
+let lastMarkerPx = null; // { x, y, which: "left"|"right" }
 
 // ---------------------------------------------------------------------------
 // Fiducial injection (only when using fiducial method)
@@ -41,11 +41,10 @@ if (VIEWPORT_METHOD === "fiducial") {
 }
 
 // ---------------------------------------------------------------------------
-// Viewport position strategies
+// Viewport position detection
 // ---------------------------------------------------------------------------
 
-// Detect whether a pixel matches a fiducial color, tolerant of color profiles.
-// Channels near 255 must be > (255 - tolerance), channels near 0 must be < tolerance.
+// Pixel colour matchers — derived from the fiducial colour constants.
 function isLeftPixel(data, i) {
   const t = FIDUCIAL_TOLERANCE;
   return (
@@ -63,135 +62,61 @@ function isRightPixel(data, i) {
   );
 }
 
-// Given a pixel at (x, y) that matches testFn, walk left and up to find
-// the exact top-left corner of the colored block.
-function walkToCorner(data, vw, vh, x, y, testFn) {
+// Walk left and up from a matching pixel to find the top-left corner of the block.
+function walkToCorner(data, vw, x, y, testFn) {
   while (x > 0 && testFn(data, (y * vw + (x - 1)) * 4)) x--;
   while (y > 0 && testFn(data, ((y - 1) * vw + x) * 4)) y--;
   return { x, y };
 }
 
-// Derive viewport top-left (video px) from the left marker corner.
-function viewportFromLeft(corner) {
-  return { x: corner.x, y: corner.y };
-}
-// Derive viewport top-left (video px) from the right marker corner.
-function viewportFromRight(corner, dpr) {
+// Given a marker corner in video pixels, return the viewport top-left in CSS pixels.
+function viewportFromMarker(cornerX, cornerY, which, dpr) {
+  if (which === "left") {
+    return { x: cornerX / dpr, y: cornerY / dpr };
+  }
+  // Right marker: its left edge is at viewport.x + innerWidth - FIDUCIAL_SIZE
   return {
-    x:
-      corner.x -
-      Math.round(window.innerWidth * dpr) +
-      Math.round(FIDUCIAL_SIZE * dpr),
-    y: corner.y,
+    x: cornerX / dpr - window.innerWidth + FIDUCIAL_SIZE,
+    y: cornerY / dpr,
   };
 }
 
-// Try to cross-validate a detected marker with its counterpart.
-// Returns true if the other marker is found at the expected position.
-function crossCheck(data, vw, vh, viewportX, viewportY, dpr) {
-  const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
-  // Check right marker from left's perspective
-  const gx =
-    viewportX + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
-  const gy = viewportY + Math.round(sizePx / 2);
-  if (
-    gx >= 0 &&
-    gx < vw &&
-    gy >= 0 &&
-    gy < vh &&
-    isRightPixel(data, (gy * vw + gx) * 4)
-  )
-    return true;
-  // Check left marker from right's perspective
-  const yx = viewportX + Math.round(sizePx / 2);
-  const yy = viewportY + Math.round(sizePx / 2);
-  if (
-    yx >= 0 &&
-    yx < vw &&
-    yy >= 0 &&
-    yy < vh &&
-    isLeftPixel(data, (yy * vw + yx) * 4)
-  )
-    return true;
-  return false;
-}
-
-// Scan the full frame for fiducial markers. Only one marker (left or right)
-// is needed to determine the viewport position, since we know window.innerWidth.
+// Find viewport top-left (CSS px) by locating any one fiducial marker.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
-  const imageData = snapCtx.getImageData(0, 0, vw, vh);
-  const data = imageData.data;
+  const data = snapCtx.getImageData(0, 0, vw, vh).data;
   const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
 
-  // Fast path: check cached position first, but require cross-validation
-  // to avoid locking onto ghost markers in the recursive canvas content.
-  if (lastViewportPx) {
-    const cx = lastViewportPx.x + Math.round(sizePx / 2);
-    const cy = lastViewportPx.y + Math.round(sizePx / 2);
-    const testFn =
-      lastViewportPx.marker === "right" ? isRightPixel : isLeftPixel;
+  // Fast path — re-check last marker position.
+  if (lastMarkerPx) {
+    const cx = lastMarkerPx.x + Math.round(sizePx / 2);
+    const cy = lastMarkerPx.y + Math.round(sizePx / 2);
     if (cx >= 0 && cx < vw && cy >= 0 && cy < vh) {
-      const ci = (cy * vw + cx) * 4;
-      if (testFn(data, ci)) {
-        const corner = walkToCorner(data, vw, vh, cx, cy, testFn);
-        const vp =
-          lastViewportPx.marker === "right"
-            ? viewportFromRight(corner, dpr)
-            : viewportFromLeft(corner);
-        if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
-          lastViewportPx = {
-            x: corner.x,
-            y: corner.y,
-            marker: lastViewportPx.marker,
-          };
-          return { x: vp.x / dpr, y: vp.y / dpr };
-        }
+      const testFn = lastMarkerPx.which === "right" ? isRightPixel : isLeftPixel;
+      if (testFn(data, (cy * vw + cx) * 4)) {
+        const corner = walkToCorner(data, vw, cx, cy, testFn);
+        lastMarkerPx = { x: corner.x, y: corner.y, which: lastMarkerPx.which };
+        return viewportFromMarker(corner.x, corner.y, lastMarkerPx.which, dpr);
       }
     }
   }
 
-  // Full frame scan. Stride = half fiducial pixel size guarantees a hit.
+  // Full scan — find the first left or right marker.
   const stride = Math.max(1, Math.floor(sizePx / 2));
-  let bestSingle = null; // fallback: single-marker result without cross-check
-
   for (let i = 0; i < data.length; i += 4 * stride) {
-    const hitX = (i / 4) % vw;
-    const hitY = Math.floor(i / 4 / vw);
+    let which = null;
+    let testFn = null;
+    if (isLeftPixel(data, i)) { which = "left"; testFn = isLeftPixel; }
+    else if (isRightPixel(data, i)) { which = "right"; testFn = isRightPixel; }
+    else continue;
 
-    if (isLeftPixel(data, i)) {
-      const left = walkToCorner(data, vw, vh, hitX, hitY, isLeftPixel);
-      const vp = viewportFromLeft(left);
-      if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
-        lastViewportPx = { x: left.x, y: left.y, marker: "left" };
-        return { x: vp.x / dpr, y: vp.y / dpr };
-      }
-      if (!bestSingle) {
-        bestSingle = { vp, corner: left, marker: "left" };
-      }
-    } else if (isRightPixel(data, i)) {
-      const right = walkToCorner(data, vw, vh, hitX, hitY, isRightPixel);
-      const vp = viewportFromRight(right, dpr);
-      if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
-        lastViewportPx = { x: right.x, y: right.y, marker: "right" };
-        return { x: vp.x / dpr, y: vp.y / dpr };
-      }
-      if (!bestSingle) {
-        bestSingle = { vp, corner: right, marker: "right" };
-      }
-    }
+    const px = (i / 4) % vw;
+    const py = Math.floor(i / 4 / vw);
+    const corner = walkToCorner(data, vw, px, py, testFn);
+    lastMarkerPx = { x: corner.x, y: corner.y, which };
+    return viewportFromMarker(corner.x, corner.y, which, dpr);
   }
 
-  // Accept single-marker result if no cross-validated match was found.
-  if (bestSingle) {
-    lastViewportPx = {
-      x: bestSingle.corner.x,
-      y: bestSingle.corner.y,
-      marker: bestSingle.marker,
-    };
-    return { x: bestSingle.vp.x / dpr, y: bestSingle.vp.y / dpr };
-  }
-
-  lastViewportPx = null;
+  lastMarkerPx = null;
   return null;
 }
 
@@ -284,10 +209,18 @@ shareBtn.addEventListener(
           displayY += (viewport.y - displayY) * 0.5;
 
           // --- Step 3: Draw the capture, cutting out the browser window ---
-          const holeX = (viewport.x - CHROME_LEFT) * dpr;
-          const holeY = (viewport.y - CHROME_TOP) * dpr;
-          const holeW = (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
-          const holeH = (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
+          // Clamp hole to canvas bounds so clipping works when the window
+          // extends beyond the screen edges.
+          const rawHoleX = (viewport.x - CHROME_LEFT) * dpr;
+          const rawHoleY = (viewport.y - CHROME_TOP) * dpr;
+          const rawHoleW = (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
+          const rawHoleH = (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
+          const holeX = Math.max(0, rawHoleX);
+          const holeY = Math.max(0, rawHoleY);
+          const holeR = Math.min(canvasEl.width, rawHoleX + rawHoleW);
+          const holeB = Math.min(canvasEl.height, rawHoleY + rawHoleH);
+          const holeW = Math.max(0, holeR - holeX);
+          const holeH = Math.max(0, holeB - holeY);
 
           ctx.save();
           ctx.beginPath();
@@ -305,21 +238,9 @@ shareBtn.addEventListener(
           ctx.drawImage(snapCanvas, 0, 0);
           ctx.restore();
 
-          // --- Step 5: Position canvas and scroll so content extends behind chrome ---
-          // Place canvas absolutely so the full capture is in the document.
-          // Then scroll so the viewport-aligned portion is visible.
-          // Content above the scroll position shows through Safari's translucent chrome.
-          const scrollX = displayX;
-          const scrollY = displayY;
-          canvasEl.style.transform = "none";
-          canvasEl.style.left = "0px";
-          canvasEl.style.top = "0px";
-          // Temporarily allow scrolling to position content
-          document.documentElement.style.overflow = "hidden";
-          document.body.style.overflow = "visible";
-          document.body.style.height = videoEl.videoHeight / dpr + "px";
-          document.body.style.width = videoEl.videoWidth / dpr + "px";
-          window.scrollTo(scrollX, scrollY);
+          // Translate the canvas so the viewport-aligned portion is visible.
+          canvasEl.style.transform =
+            `translate(${-displayX}px, ${-displayY}px)`;
 
           requestAnimationFrame(render);
         }
