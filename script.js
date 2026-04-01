@@ -7,33 +7,36 @@ const canvasEl = document.querySelector("canvas.draw");
 // const VIEWPORT_METHOD = "screenXY";
 const VIEWPORT_METHOD = "fiducial";
 
-const FIDUCIAL_SIZE = 16; // px, width and height
+const FIDUCIAL_SIZE = 64; // px, width and height
+const FIDUCIAL_LEFT = { r: 0, g: 255, b: 255 }; // cyan
+const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
+const FIDUCIAL_TOLERANCE = 50; // channel threshold for detection
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 128;
 const CHROME_BOTTOM = 64;
-const CHROME_RIGHT = 48;
-const CHROME_LEFT = 48;
+const CHROME_RIGHT = 64;
+const CHROME_LEFT = 64;
 
 let isPlaying = false;
 let displayX = 0;
 let displayY = 0;
 
 // Cached viewport position from previous frame (pixel coords).
-let lastViewportPx = null; // { x, y } in video pixels
+let lastViewportPx = null; // { x, y, marker: "left"|"right" } in video pixels
 
 // ---------------------------------------------------------------------------
 // Fiducial injection (only when using fiducial method)
 // ---------------------------------------------------------------------------
 if (VIEWPORT_METHOD === "fiducial") {
   const fidStyle =
-    "position:fixed;top:0;width:16px;height:16px;z-index:1000;pointer-events:none;";
+    `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
   const leftFid = document.createElement("div");
-  leftFid.style.cssText = fidStyle + "left:0;background:#ffff00;";
+  leftFid.style.cssText = fidStyle + `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
   document.body.appendChild(leftFid);
 
   const rightFid = document.createElement("div");
-  rightFid.style.cssText = fidStyle + "right:0;background:#00ff00;";
+  rightFid.style.cssText = fidStyle + `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
   document.body.appendChild(rightFid);
 }
 
@@ -41,12 +44,23 @@ if (VIEWPORT_METHOD === "fiducial") {
 // Viewport position strategies
 // ---------------------------------------------------------------------------
 
-// Detect whether a pixel looks yellow or green, tolerant of color profiles.
-function isYellowPixel(data, i) {
-  return data[i] > 150 && data[i + 1] > 150 && data[i + 2] < 100;
+// Detect whether a pixel matches a fiducial color, tolerant of color profiles.
+// Channels near 255 must be > (255 - tolerance), channels near 0 must be < tolerance.
+function isLeftPixel(data, i) {
+  const t = FIDUCIAL_TOLERANCE;
+  return (
+    (FIDUCIAL_LEFT.r > 127 ? data[i] > 255 - t : data[i] < t) &&
+    (FIDUCIAL_LEFT.g > 127 ? data[i + 1] > 255 - t : data[i + 1] < t) &&
+    (FIDUCIAL_LEFT.b > 127 ? data[i + 2] > 255 - t : data[i + 2] < t)
+  );
 }
-function isGreenPixel(data, i) {
-  return data[i] < 100 && data[i + 1] > 150 && data[i + 2] < 100;
+function isRightPixel(data, i) {
+  const t = FIDUCIAL_TOLERANCE;
+  return (
+    (FIDUCIAL_RIGHT.r > 127 ? data[i] > 255 - t : data[i] < t) &&
+    (FIDUCIAL_RIGHT.g > 127 ? data[i + 1] > 255 - t : data[i + 1] < t) &&
+    (FIDUCIAL_RIGHT.b > 127 ? data[i + 2] > 255 - t : data[i + 2] < t)
+  );
 }
 
 // Given a pixel at (x, y) that matches testFn, walk left and up to find
@@ -57,28 +71,80 @@ function walkToCorner(data, vw, vh, x, y, testFn) {
   return { x, y };
 }
 
-// Scan the full frame for yellow fiducial, walk to exact corner,
-// then cross-check green at the expected distance.
+// Derive viewport top-left (video px) from the left marker corner.
+function viewportFromLeft(corner) {
+  return { x: corner.x, y: corner.y };
+}
+// Derive viewport top-left (video px) from the right marker corner.
+function viewportFromRight(corner, dpr) {
+  return {
+    x:
+      corner.x -
+      Math.round(window.innerWidth * dpr) +
+      Math.round(FIDUCIAL_SIZE * dpr),
+    y: corner.y,
+  };
+}
+
+// Try to cross-validate a detected marker with its counterpart.
+// Returns true if the other marker is found at the expected position.
+function crossCheck(data, vw, vh, viewportX, viewportY, dpr) {
+  const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
+  // Check right marker from left's perspective
+  const gx =
+    viewportX + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
+  const gy = viewportY + Math.round(sizePx / 2);
+  if (
+    gx >= 0 &&
+    gx < vw &&
+    gy >= 0 &&
+    gy < vh &&
+    isRightPixel(data, (gy * vw + gx) * 4)
+  )
+    return true;
+  // Check left marker from right's perspective
+  const yx = viewportX + Math.round(sizePx / 2);
+  const yy = viewportY + Math.round(sizePx / 2);
+  if (
+    yx >= 0 &&
+    yx < vw &&
+    yy >= 0 &&
+    yy < vh &&
+    isLeftPixel(data, (yy * vw + yx) * 4)
+  )
+    return true;
+  return false;
+}
+
+// Scan the full frame for fiducial markers. Only one marker (left or right)
+// is needed to determine the viewport position, since we know window.innerWidth.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
   const imageData = snapCtx.getImageData(0, 0, vw, vh);
   const data = imageData.data;
   const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
 
-  // Fast path: check cached position first (center of previous yellow).
+  // Fast path: check cached position first, but require cross-validation
+  // to avoid locking onto ghost markers in the recursive canvas content.
   if (lastViewportPx) {
     const cx = lastViewportPx.x + Math.round(sizePx / 2);
     const cy = lastViewportPx.y + Math.round(sizePx / 2);
+    const testFn =
+      lastViewportPx.marker === "right" ? isRightPixel : isLeftPixel;
     if (cx >= 0 && cx < vw && cy >= 0 && cy < vh) {
       const ci = (cy * vw + cx) * 4;
-      if (isYellowPixel(data, ci)) {
-        const yellow = walkToCorner(data, vw, vh, cx, cy, isYellowPixel);
-        const greenProbeX = yellow.x + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
-        const greenProbeY = yellow.y + Math.round(sizePx / 2);
-        if (greenProbeX >= 0 && greenProbeX < vw && greenProbeY >= 0 && greenProbeY < vh) {
-          if (isGreenPixel(data, (greenProbeY * vw + greenProbeX) * 4)) {
-            lastViewportPx = { x: yellow.x, y: yellow.y };
-            return { x: yellow.x / dpr, y: yellow.y / dpr };
-          }
+      if (testFn(data, ci)) {
+        const corner = walkToCorner(data, vw, vh, cx, cy, testFn);
+        const vp =
+          lastViewportPx.marker === "right"
+            ? viewportFromRight(corner, dpr)
+            : viewportFromLeft(corner);
+        if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
+          lastViewportPx = {
+            x: corner.x,
+            y: corner.y,
+            marker: lastViewportPx.marker,
+          };
+          return { x: vp.x / dpr, y: vp.y / dpr };
         }
       }
     }
@@ -86,24 +152,43 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
 
   // Full frame scan. Stride = half fiducial pixel size guarantees a hit.
   const stride = Math.max(1, Math.floor(sizePx / 2));
-  for (let i = 0; i < data.length; i += 4 * stride) {
-    if (!isYellowPixel(data, i)) continue;
+  let bestSingle = null; // fallback: single-marker result without cross-check
 
+  for (let i = 0; i < data.length; i += 4 * stride) {
     const hitX = (i / 4) % vw;
     const hitY = Math.floor(i / 4 / vw);
 
-    // Walk to exact top-left corner.
-    const yellow = walkToCorner(data, vw, vh, hitX, hitY, isYellowPixel);
+    if (isLeftPixel(data, i)) {
+      const left = walkToCorner(data, vw, vh, hitX, hitY, isLeftPixel);
+      const vp = viewportFromLeft(left);
+      if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
+        lastViewportPx = { x: left.x, y: left.y, marker: "left" };
+        return { x: vp.x / dpr, y: vp.y / dpr };
+      }
+      if (!bestSingle) {
+        bestSingle = { vp, corner: left, marker: "left" };
+      }
+    } else if (isRightPixel(data, i)) {
+      const right = walkToCorner(data, vw, vh, hitX, hitY, isRightPixel);
+      const vp = viewportFromRight(right, dpr);
+      if (crossCheck(data, vw, vh, vp.x, vp.y, dpr)) {
+        lastViewportPx = { x: right.x, y: right.y, marker: "right" };
+        return { x: vp.x / dpr, y: vp.y / dpr };
+      }
+      if (!bestSingle) {
+        bestSingle = { vp, corner: right, marker: "right" };
+      }
+    }
+  }
 
-    // Cross-check: green should be near top-right of viewport.
-    const greenProbeX = yellow.x + Math.round(window.innerWidth * dpr) - Math.round(sizePx / 2);
-    const greenProbeY = yellow.y + Math.round(sizePx / 2);
-    if (greenProbeX < 0 || greenProbeX >= vw || greenProbeY < 0 || greenProbeY >= vh) continue;
-
-    if (!isGreenPixel(data, (greenProbeY * vw + greenProbeX) * 4)) continue;
-
-    lastViewportPx = { x: yellow.x, y: yellow.y };
-    return { x: yellow.x / dpr, y: yellow.y / dpr };
+  // Accept single-marker result if no cross-validated match was found.
+  if (bestSingle) {
+    lastViewportPx = {
+      x: bestSingle.corner.x,
+      y: bestSingle.corner.y,
+      marker: bestSingle.marker,
+    };
+    return { x: bestSingle.vp.x / dpr, y: bestSingle.vp.y / dpr };
   }
 
   lastViewportPx = null;
