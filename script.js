@@ -176,7 +176,10 @@ shareBtn.addEventListener(
             videoEl.videoWidth / screen.width || window.devicePixelRatio;
 
           // Resize draw canvas to match the full video feed.
-          if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
+          if (
+            canvasEl.width !== videoEl.videoWidth ||
+            canvasEl.height !== videoEl.videoHeight
+          ) {
             canvasEl.width = videoEl.videoWidth;
             canvasEl.height = videoEl.videoHeight;
             canvasEl.style.width = videoEl.videoWidth / dpr + "px";
@@ -245,8 +248,8 @@ shareBtn.addEventListener(
           // Temporarily allow scrolling to position content
           document.documentElement.style.overflow = "hidden";
           document.body.style.overflow = "visible";
-          document.body.style.height = (videoEl.videoHeight / dpr) + "px";
-          document.body.style.width = (videoEl.videoWidth / dpr) + "px";
+          document.body.style.height = videoEl.videoHeight / dpr + "px";
+          document.body.style.width = videoEl.videoWidth / dpr + "px";
           window.scrollTo(scrollX, scrollY);
 
           requestAnimationFrame(render);
