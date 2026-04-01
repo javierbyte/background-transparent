@@ -135,7 +135,9 @@ function refineFiducial(data, width, height, hitX, hitY, r, g, b) {
   return [left, top];
 }
 
-document.body.addEventListener(
+const shareBtn = document.getElementById("share-btn");
+
+shareBtn.addEventListener(
   "click",
   function () {
     if (isPlaying) {
@@ -143,6 +145,7 @@ document.body.addEventListener(
       return;
     }
     isPlaying = true;
+    shareBtn.style.display = "none";
 
     navigator.mediaDevices
       .getDisplayMedia({
@@ -172,8 +175,8 @@ document.body.addEventListener(
           const dpr =
             videoEl.videoWidth / screen.width || window.devicePixelRatio;
 
-          // Resize draw canvas to match the video feed.
-          if (videoEl.videoWidth !== canvasEl.width) {
+          // Resize draw canvas to match the full video feed.
+          if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
             canvasEl.width = videoEl.videoWidth;
             canvasEl.height = videoEl.videoHeight;
             canvasEl.style.width = videoEl.videoWidth / dpr + "px";
@@ -208,9 +211,7 @@ document.body.addEventListener(
           displayX += (viewport.x - displayX) * 0.5;
           displayY += (viewport.y - displayY) * 0.5;
 
-          // --- Step 3: Draw the capture, cutting out the browser window  ---
-          // The hole covers the viewport plus browser chrome so the
-          // captured browser window is removed from the canvas.
+          // --- Step 3: Draw the capture, cutting out the browser window ---
           const holeX = (viewport.x - CHROME_LEFT) * dpr;
           const holeY = (viewport.y - CHROME_TOP) * dpr;
           const holeW = (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
@@ -232,8 +233,21 @@ document.body.addEventListener(
           ctx.drawImage(snapCanvas, 0, 0);
           ctx.restore();
 
-          // --- Step 5: Translate so the viewport-aligned portion is visible ---
-          canvasEl.style.transform = `translate(${-displayX}px, ${-displayY}px)`;
+          // --- Step 5: Position canvas and scroll so content extends behind chrome ---
+          // Place canvas absolutely so the full capture is in the document.
+          // Then scroll so the viewport-aligned portion is visible.
+          // Content above the scroll position shows through Safari's translucent chrome.
+          const scrollX = displayX;
+          const scrollY = displayY;
+          canvasEl.style.transform = "none";
+          canvasEl.style.left = "0px";
+          canvasEl.style.top = "0px";
+          // Temporarily allow scrolling to position content
+          document.documentElement.style.overflow = "hidden";
+          document.body.style.overflow = "visible";
+          document.body.style.height = (videoEl.videoHeight / dpr) + "px";
+          document.body.style.width = (videoEl.videoWidth / dpr) + "px";
+          window.scrollTo(scrollX, scrollY);
 
           requestAnimationFrame(render);
         }
