@@ -3,14 +3,10 @@ const canvasEl = document.querySelector("canvas.draw");
 const canvasBufferEl = document.querySelector("canvas.buffer");
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
-const CHROME_TOP = 54;
-const CHROME_RIGHT = 0;
-const CHROME_BOTTOM = 0;
-const CHROME_LEFT = 0;
-
-// Extra padding around the hole so slight misalignment doesn't leak the
-// browser into the buffer.
-const EXTRA_PADDING = 80;
+const CHROME_TOP = 64;
+const CHROME_BOTTOM = 32;
+const CHROME_RIGHT = 20;
+const CHROME_LEFT = 20;
 
 const FIDUCIAL_SIZE = 32;
 
@@ -99,7 +95,10 @@ canvasEl.addEventListener(
         const snapCtx = snapCanvas.getContext("2d");
 
         function render() {
-          const dpr = window.devicePixelRatio;
+          // Derive the capture scale from actual video size vs screen size.
+          // Chrome captures at native resolution (dpr×), Safari captures at 1×.
+          const dpr =
+            videoEl.videoWidth / screen.width || window.devicePixelRatio;
 
           // Resize draw canvas to match the video feed.
           if (videoEl.videoWidth !== canvasEl.width) {
@@ -203,14 +202,12 @@ canvasEl.addEventListener(
           }
 
           // --- Step 3 & 4: Cut the browser window out of the buffer ---
-          const holeX = (detectedX - CHROME_LEFT) * dpr - EXTRA_PADDING;
-          const holeY = (detectedY - CHROME_TOP) * dpr - EXTRA_PADDING;
+          const holeX = (detectedX - CHROME_LEFT) * dpr;
+          const holeY = (detectedY - CHROME_TOP) * dpr;
           const holeWidth =
-            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr +
-            EXTRA_PADDING * 2;
+            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
           const holeHeight =
-            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr +
-            EXTRA_PADDING * 2;
+            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
 
           // Draw the video frame but clip out the hole.
           ctx.save();
