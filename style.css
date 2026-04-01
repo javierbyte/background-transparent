@@ -6,7 +6,10 @@ html {
 }
 
 body {
-  font: 14px "Open Sans", "Arial", sans-serif;
+  font:
+    14px "Open Sans",
+    "Arial",
+    sans-serif;
 }
 
 video {
@@ -18,7 +21,6 @@ video {
 canvas {
   height: 100vh;
   width: 100vw;
-  transition: transform 0.15s;
 }
 
 canvas.filter {
@@ -27,12 +29,20 @@ canvas.filter {
 
 .fiducial {
   position: fixed;
-  left: 0;
   top: 0;
-  background-color: #ffff00;
-  height: 9px;
-  width: 9px;
+  height: 32px;
+  width: 32px;
   z-index: 1000;
+}
+
+.fiducial-left {
+  left: 0;
+  background-color: #ffff00;
+}
+
+.fiducial-right {
+  right: 0;
+  background-color: #ff00ff;
 }
 
 canvas.buffer {
