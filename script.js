@@ -10,7 +10,7 @@ const VIEWPORT_METHOD = "fiducial";
 const FIDUCIAL_SIZE = 64; // px, width and height
 const FIDUCIAL_LEFT = { r: 0, g: 255, b: 255 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
-const FIDUCIAL_TOLERANCE = 50; // channel threshold for detection
+const FIDUCIAL_TOLERANCE = 6; // channel threshold for detection
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 128;
@@ -29,14 +29,17 @@ let lastMarkerPx = null; // { x, y, which: "left"|"right" }
 // Fiducial injection (only when using fiducial method)
 // ---------------------------------------------------------------------------
 if (VIEWPORT_METHOD === "fiducial") {
-  const fidStyle =
-    `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
+  const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
   const leftFid = document.createElement("div");
-  leftFid.style.cssText = fidStyle + `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
+  leftFid.style.cssText =
+    fidStyle +
+    `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
   document.body.appendChild(leftFid);
 
   const rightFid = document.createElement("div");
-  rightFid.style.cssText = fidStyle + `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
+  rightFid.style.cssText =
+    fidStyle +
+    `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
   document.body.appendChild(rightFid);
 }
 
@@ -44,21 +47,21 @@ if (VIEWPORT_METHOD === "fiducial") {
 // Viewport position detection
 // ---------------------------------------------------------------------------
 
-// Pixel colour matchers — derived from the fiducial colour constants.
+// Pixel colour matchers — total absolute RGB distance from the fiducial colour.
 function isLeftPixel(data, i) {
-  const t = FIDUCIAL_TOLERANCE;
   return (
-    (FIDUCIAL_LEFT.r > 127 ? data[i] > 255 - t : data[i] < t) &&
-    (FIDUCIAL_LEFT.g > 127 ? data[i + 1] > 255 - t : data[i + 1] < t) &&
-    (FIDUCIAL_LEFT.b > 127 ? data[i + 2] > 255 - t : data[i + 2] < t)
+    Math.abs(data[i] - FIDUCIAL_LEFT.r) +
+      Math.abs(data[i + 1] - FIDUCIAL_LEFT.g) +
+      Math.abs(data[i + 2] - FIDUCIAL_LEFT.b) <
+    FIDUCIAL_TOLERANCE
   );
 }
 function isRightPixel(data, i) {
-  const t = FIDUCIAL_TOLERANCE;
   return (
-    (FIDUCIAL_RIGHT.r > 127 ? data[i] > 255 - t : data[i] < t) &&
-    (FIDUCIAL_RIGHT.g > 127 ? data[i + 1] > 255 - t : data[i + 1] < t) &&
-    (FIDUCIAL_RIGHT.b > 127 ? data[i + 2] > 255 - t : data[i + 2] < t)
+    Math.abs(data[i] - FIDUCIAL_RIGHT.r) +
+      Math.abs(data[i + 1] - FIDUCIAL_RIGHT.g) +
+      Math.abs(data[i + 2] - FIDUCIAL_RIGHT.b) <
+    FIDUCIAL_TOLERANCE
   );
 }
 
@@ -91,7 +94,8 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
     const cx = lastMarkerPx.x + Math.round(sizePx / 2);
     const cy = lastMarkerPx.y + Math.round(sizePx / 2);
     if (cx >= 0 && cx < vw && cy >= 0 && cy < vh) {
-      const testFn = lastMarkerPx.which === "right" ? isRightPixel : isLeftPixel;
+      const testFn =
+        lastMarkerPx.which === "right" ? isRightPixel : isLeftPixel;
       if (testFn(data, (cy * vw + cx) * 4)) {
         const corner = walkToCorner(data, vw, cx, cy, testFn);
         lastMarkerPx = { x: corner.x, y: corner.y, which: lastMarkerPx.which };
@@ -105,9 +109,13 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
   for (let i = 0; i < data.length; i += 4 * stride) {
     let which = null;
     let testFn = null;
-    if (isLeftPixel(data, i)) { which = "left"; testFn = isLeftPixel; }
-    else if (isRightPixel(data, i)) { which = "right"; testFn = isRightPixel; }
-    else continue;
+    if (isLeftPixel(data, i)) {
+      which = "left";
+      testFn = isLeftPixel;
+    } else if (isRightPixel(data, i)) {
+      which = "right";
+      testFn = isRightPixel;
+    } else continue;
 
     const px = (i / 4) % vw;
     const py = Math.floor(i / 4 / vw);
@@ -213,8 +221,10 @@ shareBtn.addEventListener(
           // extends beyond the screen edges.
           const rawHoleX = (viewport.x - CHROME_LEFT) * dpr;
           const rawHoleY = (viewport.y - CHROME_TOP) * dpr;
-          const rawHoleW = (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
-          const rawHoleH = (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
+          const rawHoleW =
+            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
+          const rawHoleH =
+            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
           const holeX = Math.max(0, rawHoleX);
           const holeY = Math.max(0, rawHoleY);
           const holeR = Math.min(canvasEl.width, rawHoleX + rawHoleW);
@@ -239,8 +249,7 @@ shareBtn.addEventListener(
           ctx.restore();
 
           // Translate the canvas so the viewport-aligned portion is visible.
-          canvasEl.style.transform =
-            `translate(${-displayX}px, ${-displayY}px)`;
+          canvasEl.style.transform = `translate(${-displayX}px, ${-displayY}px)`;
 
           requestAnimationFrame(render);
         }
