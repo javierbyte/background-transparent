@@ -18,39 +18,6 @@ let isPlaying = false;
 let lastMarkerPx = null; // { x, y, which: "left"|"right" }
 
 // ---------------------------------------------------------------------------
-// Performance counters
-// ---------------------------------------------------------------------------
-const perf = {
-  lastLog: 0,
-  renderCount: 0,
-  skipCount: 0,
-  videoFrameCount: 0,
-  snapshotMs: 0,
-  fiducialMs: 0,
-  drawMs: 0,
-};
-
-function logPerf(now) {
-  const dt = now - perf.lastLog;
-  if (dt < 1000) return;
-  const n = perf.renderCount || 1;
-  const processed = perf.renderCount - perf.skipCount;
-  const avg = (v) => (v / n).toFixed(1);
-  console.log(
-    `[perf] fps: render=${perf.renderCount} video=${perf.videoFrameCount} skip=${perf.skipCount} processed=${processed}` +
-      ` | snapshot=${avg(perf.snapshotMs)}ms fiducial=${avg(perf.fiducialMs)}ms draw=${avg(perf.drawMs)}ms` +
-      ` total=${avg(perf.snapshotMs + perf.fiducialMs + perf.drawMs)}ms`,
-  );
-  perf.lastLog = now;
-  perf.renderCount = 0;
-  perf.skipCount = 0;
-  perf.videoFrameCount = 0;
-  perf.snapshotMs = 0;
-  perf.fiducialMs = 0;
-  perf.drawMs = 0;
-}
-
-// ---------------------------------------------------------------------------
 // Fiducial injection & detection — STABLE, do not modify.
 // Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
@@ -181,12 +148,11 @@ shareBtn.addEventListener(
         videoEl.srcObject = stream;
         videoEl.play();
 
-        // Track true video source FPS and flag new frames.
+        // Track new video frames to avoid redundant processing.
         let hasNewVideoFrame = true; // process the first frame immediately
         if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
           hasNewVideoFrame = false;
           function onVideoFrame() {
-            perf.videoFrameCount++;
             hasNewVideoFrame = true;
             videoEl.requestVideoFrameCallback(onVideoFrame);
           }
@@ -246,9 +212,7 @@ shareBtn.addEventListener(
             snapCanvas.width = videoEl.videoWidth;
             snapCanvas.height = videoEl.videoHeight;
           }
-          const t0 = performance.now();
           snapCtx.drawImage(videoEl, 0, 0);
-          const t1 = performance.now();
 
           // --- Find browser viewport position on screen ---
           const vw = videoEl.videoWidth;
@@ -259,15 +223,8 @@ shareBtn.addEventListener(
           } catch (e) {
             console.error(e);
           }
-          const t2 = performance.now();
-
-          perf.renderCount++;
-          perf.snapshotMs += t1 - t0;
-          perf.fiducialMs += t2 - t1;
 
           if (!viewport) {
-            perf.skipCount++;
-            logPerf(t2);
             requestAnimationFrame(captureLoop);
             return;
           }
@@ -286,42 +243,84 @@ shareBtn.addEventListener(
           const holeW = Math.max(0, holeR - holeX);
           const holeH = Math.max(0, holeB - holeY);
 
-          const t3 = performance.now();
           ctx.save();
           ctx.beginPath();
           ctx.rect(0, 0, canvasEl.width, holeY);
           ctx.rect(0, holeY, holeX, holeH);
           ctx.rect(holeX + holeW, holeY, canvasEl.width - holeX - holeW, holeH);
-          ctx.rect(0, holeY + holeH, canvasEl.width, canvasEl.height - holeY - holeH);
+          ctx.rect(
+            0,
+            holeY + holeH,
+            canvasEl.width,
+            canvasEl.height - holeY - holeH,
+          );
           ctx.clip();
           ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
           ctx.drawImage(snapCanvas, 0, 0);
           ctx.restore();
-          const t4 = performance.now();
-
-          perf.drawMs += t4 - t3;
 
           // Store viewport for the display loop.
           latestViewport = viewport;
-
-          logPerf(t4);
           requestAnimationFrame(captureLoop);
         }
 
         // --- Loop 2: Display — translate viewport at rAF speed ---
+        let displayX = null;
+        let displayY = null;
+        let prevDisplayX = null;
+        let prevDisplayY = null;
+
         function displayLoop() {
           if (latestViewport) {
+            const targetX = latestViewport.x;
+            const targetY = latestViewport.y;
+
+            if (displayX === null) {
+              displayX = targetX;
+              displayY = targetY;
+            } else {
+              const dx = targetX - displayX;
+              const dy = targetY - displayY;
+              if (Math.abs(dx) + Math.abs(dy) < 2) {
+                displayX = targetX;
+                displayY = targetY;
+              } else {
+                const displayWeight = 0.8; // more inertia = smoother but more lag
+                displayX =
+                  displayX * displayWeight + targetX * (1 - displayWeight);
+                displayY =
+                  displayY * displayWeight + targetY * (1 - displayWeight);
+              }
+            }
+
+            // Motion blur based on speed.
+            const speed =
+              prevDisplayX !== null
+                ? Math.abs(displayX - prevDisplayX) +
+                  Math.abs(displayY - prevDisplayY)
+                : 0;
+            prevDisplayX = displayX;
+            prevDisplayY = displayY;
+
+            if (speed > 0.5) {
+              canvasEl.style.filter = `blur(${speed * 0.75}px)`;
+            } else {
+              canvasEl.style.filter = "";
+            }
+
             const dpr =
               videoEl.videoWidth / screen.width || window.devicePixelRatio;
             const padX = screen.width;
             const padY = screen.height;
             canvasEl.style.marginLeft = padX + "px";
             canvasEl.style.marginTop = padY + "px";
-            document.body.style.width = videoEl.videoWidth / dpr + padX * 2 + "px";
-            document.body.style.height = videoEl.videoHeight / dpr + padY * 2 + "px";
+            document.body.style.width =
+              videoEl.videoWidth / dpr + padX * 2 + "px";
+            document.body.style.height =
+              videoEl.videoHeight / dpr + padY * 2 + "px";
             window.scrollTo(
-              Math.round(latestViewport.x) + padX,
-              Math.round(latestViewport.y) + padY,
+              Math.round(displayX) + padX,
+              Math.round(displayY) + padY,
             );
           }
           requestAnimationFrame(displayLoop);
