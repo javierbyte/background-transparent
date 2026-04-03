@@ -1,7 +1,10 @@
 html {
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar {
+  display: none;
 }
 
 body {

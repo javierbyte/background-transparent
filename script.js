@@ -4,7 +4,7 @@ const canvasEl = document.querySelector("canvas.draw");
 const FIDUCIAL_SIZE = 32; // px, width and height
 const FIDUCIAL_LEFT = { r: 255, g: 0, b: 0 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
-const FIDUCIAL_TOLERANCE = 4; // channel threshold for detection
+const FIDUCIAL_TOLERANCE = 12; // channel threshold for detection
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 128;
@@ -13,14 +13,46 @@ const CHROME_RIGHT = 64;
 const CHROME_LEFT = 64;
 
 let isPlaying = false;
-let displayX = 0;
-let displayY = 0;
 
 // Cached marker position from previous frame (video pixels).
 let lastMarkerPx = null; // { x, y, which: "left"|"right" }
 
 // ---------------------------------------------------------------------------
-// Fiducial injection
+// Performance counters
+// ---------------------------------------------------------------------------
+const perf = {
+  lastLog: 0,
+  renderCount: 0,
+  skipCount: 0,
+  videoFrameCount: 0,
+  snapshotMs: 0,
+  fiducialMs: 0,
+  drawMs: 0,
+};
+
+function logPerf(now) {
+  const dt = now - perf.lastLog;
+  if (dt < 1000) return;
+  const n = perf.renderCount || 1;
+  const processed = perf.renderCount - perf.skipCount;
+  const avg = (v) => (v / n).toFixed(1);
+  console.log(
+    `[perf] fps: render=${perf.renderCount} video=${perf.videoFrameCount} skip=${perf.skipCount} processed=${processed}` +
+      ` | snapshot=${avg(perf.snapshotMs)}ms fiducial=${avg(perf.fiducialMs)}ms draw=${avg(perf.drawMs)}ms` +
+      ` total=${avg(perf.snapshotMs + perf.fiducialMs + perf.drawMs)}ms`,
+  );
+  perf.lastLog = now;
+  perf.renderCount = 0;
+  perf.skipCount = 0;
+  perf.videoFrameCount = 0;
+  perf.snapshotMs = 0;
+  perf.fiducialMs = 0;
+  perf.drawMs = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Fiducial injection & detection — STABLE, do not modify.
+// Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
 const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
 const leftFid = document.createElement("div");
@@ -36,7 +68,7 @@ rightFid.style.cssText =
 document.body.appendChild(rightFid);
 
 // ---------------------------------------------------------------------------
-// Viewport position detection
+// Viewport position detection — STABLE, do not modify.
 // ---------------------------------------------------------------------------
 
 // Pixel colour matchers — total absolute RGB distance from the fiducial colour.
@@ -148,6 +180,19 @@ shareBtn.addEventListener(
       .then((stream) => {
         videoEl.srcObject = stream;
         videoEl.play();
+
+        // Track true video source FPS and flag new frames.
+        let hasNewVideoFrame = true; // process the first frame immediately
+        if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+          hasNewVideoFrame = false;
+          function onVideoFrame() {
+            perf.videoFrameCount++;
+            hasNewVideoFrame = true;
+            videoEl.requestVideoFrameCallback(onVideoFrame);
+          }
+          videoEl.requestVideoFrameCallback(onVideoFrame);
+        }
+
         const ctx = canvasEl.getContext("2d");
         ctx.imageSmoothingEnabled = false;
 
@@ -158,12 +203,24 @@ shareBtn.addEventListener(
         const snapCtx = snapCanvas.getContext("2d");
         snapCtx.imageSmoothingEnabled = false;
 
-        function render() {
+        // Shared viewport position written by the capture loop,
+        // read by the display loop.
+        let latestViewport = null;
+
+        // --- Loop 1: Capture — snapshot, fiducial, draw with hole ---
+        function captureLoop() {
           // Wait until the video has actual frame data.
           if (videoEl.videoWidth === 0 || videoEl.readyState < 2) {
-            requestAnimationFrame(render);
+            requestAnimationFrame(captureLoop);
             return;
           }
+
+          // Skip if the video source hasn't delivered a new frame.
+          if (!hasNewVideoFrame) {
+            requestAnimationFrame(captureLoop);
+            return;
+          }
+          hasNewVideoFrame = false;
 
           // Derive the capture scale from actual video size vs screen size.
           // Chrome captures at native resolution (dpr×), Safari captures at 1×.
@@ -189,9 +246,11 @@ shareBtn.addEventListener(
             snapCanvas.width = videoEl.videoWidth;
             snapCanvas.height = videoEl.videoHeight;
           }
+          const t0 = performance.now();
           snapCtx.drawImage(videoEl, 0, 0);
+          const t1 = performance.now();
 
-          // --- Step 2: Find the viewport position ---
+          // --- Find browser viewport position on screen ---
           const vw = videoEl.videoWidth;
           const vh = videoEl.videoHeight;
           let viewport = null;
@@ -200,40 +259,76 @@ shareBtn.addEventListener(
           } catch (e) {
             console.error(e);
           }
+          const t2 = performance.now();
+
+          perf.renderCount++;
+          perf.snapshotMs += t1 - t0;
+          perf.fiducialMs += t2 - t1;
 
           if (!viewport) {
-            requestAnimationFrame(render);
+            perf.skipCount++;
+            logPerf(t2);
+            requestAnimationFrame(captureLoop);
             return;
           }
 
-          displayX = Math.round(displayX + (viewport.x - displayX) * 0.5);
-          displayY = Math.round(displayY + (viewport.y - displayY) * 0.5);
+          // --- Draw the capture, cutting out the browser window --- STABLE
+          const rawHoleX = (viewport.x - CHROME_LEFT) * dpr;
+          const rawHoleY = (viewport.y - CHROME_TOP) * dpr;
+          const rawHoleW =
+            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
+          const rawHoleH =
+            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
+          const holeX = Math.max(0, rawHoleX);
+          const holeY = Math.max(0, rawHoleY);
+          const holeR = Math.min(canvasEl.width, rawHoleX + rawHoleW);
+          const holeB = Math.min(canvasEl.height, rawHoleY + rawHoleH);
+          const holeW = Math.max(0, holeR - holeX);
+          const holeH = Math.max(0, holeB - holeY);
 
-          // --- Step 3: Draw the capture, cutting out only the viewport ---
-          // Draw the full captured screen, then clear just the content area.
-          // The browser chrome area keeps the captured image so Safari's
-          // translucent toolbar can blur over it instead of showing black.
+          const t3 = performance.now();
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, canvasEl.width, holeY);
+          ctx.rect(0, holeY, holeX, holeH);
+          ctx.rect(holeX + holeW, holeY, canvasEl.width - holeX - holeW, holeH);
+          ctx.rect(0, holeY + holeH, canvasEl.width, canvasEl.height - holeY - holeH);
+          ctx.clip();
           ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
           ctx.drawImage(snapCanvas, 0, 0);
+          ctx.restore();
+          const t4 = performance.now();
 
-          const vpX = Math.max(0, Math.round(viewport.x * dpr));
-          const vpY = Math.max(0, Math.round(viewport.y * dpr));
-          const vpW = Math.round(window.innerWidth * dpr);
-          const vpH = Math.round(window.innerHeight * dpr);
-          ctx.clearRect(vpX, vpY, vpW, vpH);
+          perf.drawMs += t4 - t3;
 
-          // Make the body large enough to hold the full capture so content
-          // extends behind Safari's translucent chrome (scrollable area).
-          document.body.style.width = videoEl.videoWidth / dpr + "px";
-          document.body.style.height = videoEl.videoHeight / dpr + "px";
+          // Store viewport for the display loop.
+          latestViewport = viewport;
 
-          // Scroll to the viewport position instead of using CSS transforms.
-          // This ensures content physically exists behind Safari's toolbar.
-          window.scrollTo(displayX, displayY);
-
-          requestAnimationFrame(render);
+          logPerf(t4);
+          requestAnimationFrame(captureLoop);
         }
-        render();
+
+        // --- Loop 2: Display — translate viewport at rAF speed ---
+        function displayLoop() {
+          if (latestViewport) {
+            const dpr =
+              videoEl.videoWidth / screen.width || window.devicePixelRatio;
+            const padX = screen.width;
+            const padY = screen.height;
+            canvasEl.style.marginLeft = padX + "px";
+            canvasEl.style.marginTop = padY + "px";
+            document.body.style.width = videoEl.videoWidth / dpr + padX * 2 + "px";
+            document.body.style.height = videoEl.videoHeight / dpr + padY * 2 + "px";
+            window.scrollTo(
+              Math.round(latestViewport.x) + padX,
+              Math.round(latestViewport.y) + padY,
+            );
+          }
+          requestAnimationFrame(displayLoop);
+        }
+
+        captureLoop();
+        displayLoop();
       })
       .catch((err) => {
         console.error("getDisplayMedia failed:", err);
