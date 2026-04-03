@@ -1,16 +1,10 @@
 const videoEl = document.querySelector("video");
 const canvasEl = document.querySelector("canvas.draw");
 
-// --- Viewport detection method ---
-// "fiducial" — scan screen capture for colour markers (accurate, ~1 frame lag)
-// "screenXY"  — use window.screenX / screenY browser APIs (instant, ~15 Hz update)
-// const VIEWPORT_METHOD = "screenXY";
-const VIEWPORT_METHOD = "fiducial";
-
-const FIDUCIAL_SIZE = 64; // px, width and height
-const FIDUCIAL_LEFT = { r: 0, g: 255, b: 255 }; // cyan
+const FIDUCIAL_SIZE = 32; // px, width and height
+const FIDUCIAL_LEFT = { r: 255, g: 0, b: 0 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
-const FIDUCIAL_TOLERANCE = 6; // channel threshold for detection
+const FIDUCIAL_TOLERANCE = 4; // channel threshold for detection
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 128;
@@ -26,22 +20,20 @@ let displayY = 0;
 let lastMarkerPx = null; // { x, y, which: "left"|"right" }
 
 // ---------------------------------------------------------------------------
-// Fiducial injection (only when using fiducial method)
+// Fiducial injection
 // ---------------------------------------------------------------------------
-if (VIEWPORT_METHOD === "fiducial") {
-  const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
-  const leftFid = document.createElement("div");
-  leftFid.style.cssText =
-    fidStyle +
-    `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
-  document.body.appendChild(leftFid);
+const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
+const leftFid = document.createElement("div");
+leftFid.style.cssText =
+  fidStyle +
+  `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
+document.body.appendChild(leftFid);
 
-  const rightFid = document.createElement("div");
-  rightFid.style.cssText =
-    fidStyle +
-    `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
-  document.body.appendChild(rightFid);
-}
+const rightFid = document.createElement("div");
+rightFid.style.cssText =
+  fidStyle +
+  `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
+document.body.appendChild(rightFid);
 
 // ---------------------------------------------------------------------------
 // Viewport position detection
@@ -128,12 +120,7 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
   return null;
 }
 
-// Dispatcher — calls the strategy selected by VIEWPORT_METHOD.
 function findViewportPosition(snapCtx, vw, vh, dpr) {
-  if (VIEWPORT_METHOD === "screenXY") {
-    const chromeHeight = window.outerHeight - window.innerHeight;
-    return { x: window.screenX, y: window.screenY + chromeHeight };
-  }
   return findViewportFiducial(snapCtx, vw, vh, dpr);
 }
 
@@ -151,19 +138,25 @@ shareBtn.addEventListener(
 
     navigator.mediaDevices
       .getDisplayMedia({
-        video: true,
+        video: {
+          width: { ideal: screen.width * window.devicePixelRatio },
+          height: { ideal: screen.height * window.devicePixelRatio },
+          frameRate: { ideal: 60 },
+        },
         audio: false,
       })
       .then((stream) => {
         videoEl.srcObject = stream;
         videoEl.play();
         const ctx = canvasEl.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
 
         // Offscreen canvas to snapshot each video frame, so detection and
         // painting always use the exact same frame. Without this, a live
         // MediaStream can advance between the two drawImage calls.
         const snapCanvas = document.createElement("canvas");
         const snapCtx = snapCanvas.getContext("2d");
+        snapCtx.imageSmoothingEnabled = false;
 
         function render() {
           // Wait until the video has actual frame data.
@@ -213,43 +206,30 @@ shareBtn.addEventListener(
             return;
           }
 
-          displayX += (viewport.x - displayX) * 0.5;
-          displayY += (viewport.y - displayY) * 0.5;
+          displayX = Math.round(displayX + (viewport.x - displayX) * 0.5);
+          displayY = Math.round(displayY + (viewport.y - displayY) * 0.5);
 
-          // --- Step 3: Draw the capture, cutting out the browser window ---
-          // Clamp hole to canvas bounds so clipping works when the window
-          // extends beyond the screen edges.
-          const rawHoleX = (viewport.x - CHROME_LEFT) * dpr;
-          const rawHoleY = (viewport.y - CHROME_TOP) * dpr;
-          const rawHoleW =
-            (CHROME_LEFT + window.innerWidth + CHROME_RIGHT) * dpr;
-          const rawHoleH =
-            (CHROME_TOP + window.innerHeight + CHROME_BOTTOM) * dpr;
-          const holeX = Math.max(0, rawHoleX);
-          const holeY = Math.max(0, rawHoleY);
-          const holeR = Math.min(canvasEl.width, rawHoleX + rawHoleW);
-          const holeB = Math.min(canvasEl.height, rawHoleY + rawHoleH);
-          const holeW = Math.max(0, holeR - holeX);
-          const holeH = Math.max(0, holeB - holeY);
-
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(0, 0, canvasEl.width, holeY);
-          ctx.rect(0, holeY, holeX, holeH);
-          ctx.rect(holeX + holeW, holeY, canvasEl.width - holeX - holeW, holeH);
-          ctx.rect(
-            0,
-            holeY + holeH,
-            canvasEl.width,
-            canvasEl.height - holeY - holeH,
-          );
-          ctx.clip();
+          // --- Step 3: Draw the capture, cutting out only the viewport ---
+          // Draw the full captured screen, then clear just the content area.
+          // The browser chrome area keeps the captured image so Safari's
+          // translucent toolbar can blur over it instead of showing black.
           ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
           ctx.drawImage(snapCanvas, 0, 0);
-          ctx.restore();
 
-          // Translate the canvas so the viewport-aligned portion is visible.
-          canvasEl.style.transform = `translate(${-displayX}px, ${-displayY}px)`;
+          const vpX = Math.max(0, Math.round(viewport.x * dpr));
+          const vpY = Math.max(0, Math.round(viewport.y * dpr));
+          const vpW = Math.round(window.innerWidth * dpr);
+          const vpH = Math.round(window.innerHeight * dpr);
+          ctx.clearRect(vpX, vpY, vpW, vpH);
+
+          // Make the body large enough to hold the full capture so content
+          // extends behind Safari's translucent chrome (scrollable area).
+          document.body.style.width = videoEl.videoWidth / dpr + "px";
+          document.body.style.height = videoEl.videoHeight / dpr + "px";
+
+          // Scroll to the viewport position instead of using CSS transforms.
+          // This ensures content physically exists behind Safari's toolbar.
+          window.scrollTo(displayX, displayY);
 
           requestAnimationFrame(render);
         }
