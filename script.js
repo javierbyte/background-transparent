@@ -198,16 +198,28 @@ function findViewportPosition(snapCtx, vw, vh, dpr) {
 }
 
 const shareBtn = document.getElementById("share-btn");
+const overlayBtn = document.getElementById("overlay-btn");
+const crtOverlay = document.getElementById("crt-overlay");
+
+let crtActive = false;
+let crtInited = false;
+
+overlayBtn.addEventListener("click", function () {
+  crtActive = !crtActive;
+  if (crtActive && !crtInited) {
+    crtInited = initCRTFilter(crtOverlay);
+  }
+  crtOverlay.classList.toggle("active", crtActive);
+  overlayBtn.textContent = crtActive ? "No FX" : "CRT";
+});
 
 shareBtn.addEventListener(
   "click",
   function () {
-    if (isPlaying) {
-      canvasEl.classList.toggle("filter");
-      return;
-    }
+    if (isPlaying) return;
     isPlaying = true;
     shareBtn.style.display = "none";
+    overlayBtn.style.display = "block";
 
     navigator.mediaDevices
       .getDisplayMedia({
@@ -414,6 +426,11 @@ shareBtn.addEventListener(
               Math.round(displayX) + padX,
               Math.round(displayY) + padY,
             );
+
+            // Render CRT shader overlay when active
+            if (crtActive && crtInited) {
+              renderCRTFrame(canvasEl, displayX, displayY, dpr);
+            }
           }
           requestAnimationFrame(displayLoop);
         }
