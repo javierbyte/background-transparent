@@ -4,7 +4,7 @@ const canvasEl = document.querySelector("canvas.draw");
 // Mode toggle: true = fiducial for initial calibration then screenX/Y, false = fiducial every frame
 const USE_SCREEN_POSITION = false;
 
-const FIDUCIAL_SIZE = 48; // px, width and height
+const FIDUCIAL_SIZE = 16; // px, width and height
 const FIDUCIAL_LEFT = { r: 3, g: 169, b: 244 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
 const FIDUCIAL_TOLERANCE = 12; // channel threshold — relaxed to handle compression artifacts at edges
@@ -31,7 +31,8 @@ let baseScreenY = 0;
 // Fiducial injection & detection — STABLE, do not modify.
 // Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
-const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;`;
+const FIDUCIAL_BORDER = 1; // px, solid black border around each fiducial
+const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;border:${FIDUCIAL_BORDER}px solid black;`;
 const leftFid = document.createElement("div");
 leftFid.style.cssText =
   fidStyle +
@@ -104,12 +105,15 @@ function fiducialCenter(data, vw, vh, cx, cy, testFn) {
 function viewportFromMarker(centerX, centerY, which, dpr) {
   const halfCSS = FIDUCIAL_SIZE / 2;
   if (which === "left") {
-    return { x: centerX / dpr - halfCSS, y: centerY / dpr - halfCSS };
+    return {
+      x: centerX / dpr - FIDUCIAL_BORDER - halfCSS,
+      y: centerY / dpr - FIDUCIAL_BORDER - halfCSS,
+    };
   }
-  // Right marker: center is at viewport.x + innerWidth - FIDUCIAL_SIZE/2
+  // Right marker: colored center is at viewport.x + innerWidth - FIDUCIAL_BORDER - halfCSS
   return {
-    x: centerX / dpr - window.innerWidth + halfCSS,
-    y: centerY / dpr - halfCSS,
+    x: centerX / dpr - window.innerWidth + FIDUCIAL_BORDER + halfCSS,
+    y: centerY / dpr - FIDUCIAL_BORDER - halfCSS,
   };
 }
 
