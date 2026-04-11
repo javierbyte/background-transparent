@@ -91,7 +91,6 @@ canvas.draw {
   color: rgba(255, 255, 255, 0.7);
 }
 
-/* CRT overlay — WebGL canvas */
 #crt-overlay {
   display: none;
   position: fixed;
@@ -108,7 +107,6 @@ canvas.draw {
   display: block;
 }
 
-/* Gameboy overlay — WebGL canvas */
 #gb-overlay {
   display: none;
   position: fixed;
@@ -125,7 +123,6 @@ canvas.draw {
   display: block;
 }
 
-/* Liquid Glass overlay */
 #glass-overlay {
   display: none;
   position: fixed;

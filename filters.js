@@ -1,7 +1,4 @@
-// ---------------------------------------------------------------------------
-// filters.js — WebGL CRT shader overlay
-// Inspired by crt-geom (cgwg, Themaister, DOLLS) and ShaderGlass (mausimus)
-// ---------------------------------------------------------------------------
+// WebGL CRT shader, inspired by crt-geom and ShaderGlass
 
 const CRT_VERT = `#version 300 es
 in vec2 a_pos;
@@ -22,7 +19,6 @@ uniform sampler2D u_tex;
 uniform vec2 u_resolution;
 uniform float u_time;
 
-// --- CRT parameters (tuned to look like a nice curved monitor) ---
 const float CURVATURE    = 0.20;   // barrel distortion strength
 const float CORNER_SIZE  = 0.04;   // rounded corner radius
 const float CORNER_SMOOTH = 650.0; // corner edge softness
@@ -36,15 +32,12 @@ const float CHROM_AB   = 0.003;  // chromatic aberration amount
 const float VIGNETTE   = 0.5;    // edge darkening strength
 const float BRIGHTNESS = 1.45;   // brightness boost to compensate for darkening
 
-// Barrel distortion — attempt to simulate a curved glass surface
 vec2 barrel(vec2 uv) {
   vec2 cc = uv - 0.5;
   float r2 = dot(cc, cc);
-  // Cubic distortion for a more natural CRT curve
   return uv + cc * r2 * CURVATURE * (1.0 + r2 * 0.6);
 }
 
-// Smooth rounded-corner mask
 float cornerMask(vec2 uv) {
   vec2 q = abs(uv - 0.5) * 2.0;
   vec2 d = max(q - (1.0 - vec2(CORNER_SIZE)), 0.0);
@@ -52,8 +45,7 @@ float cornerMask(vec2 uv) {
   return clamp((CORNER_SIZE - dist) * CORNER_SMOOTH, 0.0, 1.0);
 }
 
-// Scanline profile — brighter pixels have slightly wider lines (like crt-geom)
-// Uses pre-distortion v_uv to avoid moiré from warped coordinates
+// Brighter pixels get wider scanlines. Uses pre-distortion UV to avoid moiré.
 float scanline(float screenY, float luminance) {
   float width = 0.5 + luminance * 0.3;
   float s = sin(screenY * 3.14159265);
@@ -61,33 +53,27 @@ float scanline(float screenY, float luminance) {
 }
 
 void main() {
-  // Apply barrel distortion
   vec2 uv = barrel(v_uv);
 
-  // Black outside the curved screen
   if (uv.x < -0.01 || uv.x > 1.01 || uv.y < -0.01 || uv.y > 1.01) {
     outColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
 
-  // Corner mask
   float cmask = cornerMask(uv);
 
-  // Chromatic aberration — shift R and B channels outward from center
   vec2 dir = (uv - 0.5) * CHROM_AB;
   float r = texture(u_tex, uv - dir).r;
   float g = texture(u_tex, uv).g;
   float b = texture(u_tex, uv + dir).b;
   vec3 col = vec3(r, g, b);
 
-  // Scanlines — use screen-space Y (not distorted UV) to avoid moiré.
-  // Divide by 4.0 so each line spans ~4 physical pixels (~2 CSS px on Retina).
-  // Thick enough to survive video compression in screen recordings.
+  // Screen-space Y so scanlines don't moiré with barrel distortion.
   float scanY = gl_FragCoord.y / 8.0 + u_time * SCANLINE_SPEED;
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   col *= scanline(scanY, lum);
 
-  // RGB phosphor dot mask — cycles every 3 pixels horizontally
+  // RGB phosphor dot mask
   float px = gl_FragCoord.x;
   int phase = int(mod(px, 3.0));
   vec3 mask = vec3(1.0 - DOT_MASK);
@@ -96,22 +82,16 @@ void main() {
   else                 mask.b = 1.0;
   col *= mask;
 
-  // Vignette — simple radial darkening from center
   float dist = length(uv - 0.5) * 2.0; // 0 at center, ~1.4 at corners
   col *= 1.0 - VIGNETTE * dist * dist;
 
-  // Brightness boost
   col *= BRIGHTNESS;
-
-  // Corner fade to black
   col *= cmask;
 
   outColor = vec4(col, 1.0);
 }`;
 
-// ---------------------------------------------------------------------------
-// Gameboy DMG shader — pixelated matrix with 4 green shades
-// ---------------------------------------------------------------------------
+// Gameboy DMG shader
 
 const GAMEBOY_FRAG = `#version 300 es
 precision highp float;
@@ -122,11 +102,9 @@ out vec4 outColor;
 uniform sampler2D u_tex;
 uniform vec2 u_resolution;
 
-// Grid: 8px dot + 2px gap = 10px cell
 const float DOT_SIZE  = 4.0;
 const float CELL_SIZE = 6.0;
 
-// DMG-inspired palette (5 shades of green)
 const vec3 PAL0 = vec3(0.608, 0.737, 0.059); // #9bbc0f — lightest
 const vec3 PAL1 = vec3(0.545, 0.675, 0.059); // #8bac0f — light
 const vec3 PAL2 = vec3(0.365, 0.529, 0.122); // #5d871f — mid
@@ -135,13 +113,11 @@ const vec3 PAL4 = vec3(0.059, 0.220, 0.059); // #0f380f — darkest
 
 const vec3 GAP_COLOR = vec3(0.043, 0.165, 0.043); // dark green gap
 
-// 4x4 Bayer dithering matrix (normalized to -0.5..+0.5 range)
 const float DITHER_STRENGTH = 0.15; // how much dither to apply per palette step
 
 float bayer4(vec2 pos) {
   ivec2 p = ivec2(mod(pos, 4.0));
   int idx = p.x + p.y * 4;
-  // Classic 4x4 Bayer, values 0..15 normalized to -0.5..+0.5
   float m;
   if      (idx ==  0) m =  0.0; else if (idx ==  1) m =  8.0;
   else if (idx ==  2) m =  2.0; else if (idx ==  3) m = 10.0;
@@ -155,24 +131,18 @@ float bayer4(vec2 pos) {
 }
 
 void main() {
-  // Position in pixel coordinates
   vec2 px = gl_FragCoord.xy;
-
-  // Which cell are we in, and where within the cell?
   vec2 cell = mod(px, CELL_SIZE);
 
-  // Use cell index for dithering so all pixels in a dot get the same dither value
   vec2 cellIdx = floor(px / CELL_SIZE);
   vec2 sampleUV = (cellIdx * CELL_SIZE + CELL_SIZE * 0.5) / u_resolution;
   sampleUV.y = 1.0 - sampleUV.y; // flip Y for GL coordinates
 
   vec3 col = texture(u_tex, sampleUV).rgb;
 
-  // Compute luminance + ordered dither offset
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   lum += bayer4(cellIdx) * DITHER_STRENGTH;
 
-  // Quantize to 5 levels and map to palette
   vec3 out_col;
   if (lum > 0.80)      out_col = PAL0;
   else if (lum > 0.60) out_col = PAL1;
@@ -180,7 +150,6 @@ void main() {
   else if (lum > 0.20) out_col = PAL3;
   else                 out_col = PAL4;
 
-  // If we're in the gap region, use dark green
   if (cell.x >= DOT_SIZE || cell.y >= DOT_SIZE) {
     outColor = vec4(GAP_COLOR, 1.0);
     return;
@@ -189,9 +158,7 @@ void main() {
   outColor = vec4(out_col, 1.0);
 }`;
 
-// ---------------------------------------------------------------------------
-// WebGL setup & render — CRT
-// ---------------------------------------------------------------------------
+// CRT filter
 
 let _gl = null;
 let _program = null;
@@ -327,9 +294,7 @@ function renderCRTFrame(sourceCanvas, displayX, displayY, dpr) {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
-// ---------------------------------------------------------------------------
-// WebGL setup & render — Gameboy
-// ---------------------------------------------------------------------------
+// Gameboy filter
 
 let _gb_gl = null;
 let _gb_program = null;
@@ -442,7 +407,7 @@ function renderGameboyFrame(sourceCanvas, displayX, displayY, dpr) {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
-/* ── Liquid Diamond filter ── */
+// Liquid diamond filter
 
 let _diamondInstance = null;
 

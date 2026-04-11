@@ -37,10 +37,6 @@ let baseViewportY = 0;
 let baseScreenX = 0;
 let baseScreenY = 0;
 
-// ---------------------------------------------------------------------------
-// Fiducial injection & detection — STABLE, do not modify.
-// Handles: partial off-screen, single-marker fallback, fast-path caching.
-// ---------------------------------------------------------------------------
 const FIDUCIAL_BORDER = 1; // px, black border — prevents browser inner-shadow artifacts
 const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid #000000;display:flex;align-items:center;justify-content:center;font-size:0.8125rem;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
 const leftFid = document.createElement("a");
@@ -57,14 +53,7 @@ rightFid.style.cssText =
 rightFid.textContent = "NEXT EFFECT";
 document.body.appendChild(rightFid);
 
-// ---------------------------------------------------------------------------
-// Viewport position detection — STABLE, do not modify.
-// ---------------------------------------------------------------------------
-
-// Pixel colour matchers — total absolute RGB distance from the fiducial
-// background colour.  Text pixels (50 % black over the background) are
-// intentionally NOT matched so the detector only sees the contiguous
-// background border that surrounds the text on all four sides.
+// Match fiducial background color, ignoring text pixels on purpose.
 function isLeftPixel(data, i) {
   return (
     Math.abs(data[i] - FIDUCIAL_LEFT.r) +
@@ -82,10 +71,7 @@ function isRightPixel(data, i) {
   );
 }
 
-// Find the fiducial center by scanning a bounded region around a hit pixel
-// for the outermost matching (background-colour) pixels.  The background
-// forms a contiguous border on all four sides of the text, so the bounding
-// box extremes give the true fiducial edges and the midpoint is rock-solid.
+// Find the fiducial center from the bounding box of matching pixels nearby.
 function fiducialCenter(data, vw, vh, hitX, hitY, testFn, searchW, searchH) {
   const l = Math.max(0, hitX - searchW);
   const r = Math.min(vw - 1, hitX + searchW);
@@ -115,7 +101,6 @@ function fiducialCenter(data, vw, vh, hitX, hitY, testFn, searchW, searchH) {
   };
 }
 
-// Given the fiducial center in video pixels, return the viewport top-left in CSS pixels.
 function viewportFromMarker(centerX, centerY, which, dpr) {
   const halfW = FIDUCIAL_WIDTH / 2;
   const halfH = FIDUCIAL_HEIGHT / 2;
@@ -132,8 +117,6 @@ function viewportFromMarker(centerX, centerY, which, dpr) {
   };
 }
 
-// Read a small region around a point and detect within it.
-// Returns { center, which } or null.
 function detectInRegion(
   snapCtx,
   vw,
@@ -162,7 +145,6 @@ function detectInRegion(
   };
 }
 
-// Find viewport top-left (CSS px) by locating any one fiducial marker.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
   const widthPx = Math.round(FIDUCIAL_WIDTH * dpr);
   const heightPx = Math.round(FIDUCIAL_HEIGHT * dpr);
@@ -226,7 +208,6 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
   return null;
 }
 
-// Scan a frame and pick the 2 candidate colors least present on screen.
 function chooseFiducialColors(snapCtx, vw, vh) {
   const data = snapCtx.getImageData(0, 0, vw, vh).data;
   const stride = Math.max(1, Math.floor((vw * vh) / 10000)); // ~10k samples
@@ -286,7 +267,6 @@ const FILTER_LABELS = {
   glass: "No FX",
 };
 
-// Right fiducial doubles as the "Next Effect" button.
 rightFid.addEventListener("click", function () {
   const idx = FILTER_CYCLE.indexOf(activeFilter);
   activeFilter = FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length];
@@ -442,7 +422,7 @@ shareBtn.addEventListener(
             calibrated = true;
           }
 
-          // --- Draw the capture, cutting out the browser window --- STABLE
+          // Cut out the browser window from the capture.
           const rawHoleX = (viewport.x - CHROME_LEFT) * dpr;
           const rawHoleY = (viewport.y - CHROME_TOP) * dpr;
           const rawHoleW =
