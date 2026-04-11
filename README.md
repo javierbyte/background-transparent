@@ -25,3 +25,6 @@ I ended up separating the "measure and update buffer" step from a different one 
 ## Is there any practical usage?
 
 I want to build a translator using OCR, maybe there are some nice use cases.
+
+https://github.com/user-attachments/assets/ac74df01-e939-432a-b3f9-fc28a05e9172
+
