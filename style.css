@@ -79,12 +79,11 @@ canvas.draw {
 
 #learn-more-link {
   display: block;
-  margin-top: 24px;
   color: white;
   font-size: 0.875rem;
   font-family: system-ui, sans-serif;
-  text-decoration: none;
   letter-spacing: 0.5px;
+  text-underline-offset: 3px;
 }
 
 #learn-more-link:hover {
