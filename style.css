@@ -34,6 +34,7 @@ canvas.draw {
   cursor: pointer;
   pointer-events: none;
   image-rendering: pixelated;
+  transition: filter 0.1s;
 }
 
 #share-btn {
@@ -104,4 +105,3 @@ canvas.draw {
 #gb-overlay.active {
   display: block;
 }
-

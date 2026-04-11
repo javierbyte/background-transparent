@@ -4,10 +4,10 @@ const canvasEl = document.querySelector("canvas.draw");
 // Mode toggle: true = fiducial for initial calibration then screenX/Y, false = fiducial every frame
 const USE_SCREEN_POSITION = false;
 
-const FIDUCIAL_SIZE = 16; // px, width and height
+const FIDUCIAL_SIZE = 20; // px, width and height
 const FIDUCIAL_LEFT = { r: 3, g: 169, b: 244 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
-const FIDUCIAL_TOLERANCE = 12; // channel threshold — relaxed to handle compression artifacts at edges
+const FIDUCIAL_TOLERANCE = 32; // channel threshold — relaxed to handle compression artifacts at edges
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
 const CHROME_TOP = 128;
@@ -397,11 +397,11 @@ shareBtn.addEventListener(
             } else {
               const dx = targetX - displayX;
               const dy = targetY - displayY;
-              if (Math.abs(dx) + Math.abs(dy) < 2) {
+              if (Math.abs(dx) + Math.abs(dy) < 4) {
                 displayX = targetX;
                 displayY = targetY;
               } else {
-                const displayWeight = 0.5; // more inertia = smoother but more lag
+                const displayWeight = 0.333; // more inertia = smoother but more lag
                 displayX =
                   displayX * displayWeight + targetX * (1 - displayWeight);
                 displayY =
@@ -412,14 +412,14 @@ shareBtn.addEventListener(
             // Motion blur based on speed.
             const speed =
               prevDisplayX !== null
-                ? Math.abs(displayX - prevDisplayX) +
-                  Math.abs(displayY - prevDisplayY)
+                ? Math.hypot(displayX - prevDisplayX, displayY - prevDisplayY)
                 : 0;
+
             prevDisplayX = displayX;
             prevDisplayY = displayY;
 
-            if (speed > 0.5) {
-              canvasEl.style.filter = `blur(${speed * 1}px)`;
+            if (speed > 0.1) {
+              canvasEl.style.filter = `blur(${speed * 2}px)`;
             } else {
               canvasEl.style.filter = "";
             }
