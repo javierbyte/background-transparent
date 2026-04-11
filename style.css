@@ -51,27 +51,6 @@ canvas.draw {
   border-radius: 8px;
 }
 
-/* CRT overlay — toggle button */
-#overlay-btn {
-  display: none;
-  position: fixed;
-  bottom: 16px;
-  right: 16px;
-  z-index: 3000;
-  padding: 8px 16px;
-  font-size: 14px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.15);
-  color: #0f0;
-  border: 1px solid rgba(0, 255, 0, 0.3);
-  border-radius: 4px;
-  font-family: monospace;
-  backdrop-filter: blur(4px);
-}
-#overlay-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
 /* CRT overlay — WebGL canvas */
 #crt-overlay {
   display: none;

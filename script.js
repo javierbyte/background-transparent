@@ -4,7 +4,8 @@ const canvasEl = document.querySelector("canvas.draw");
 // Mode toggle: true = fiducial for initial calibration then screenX/Y, false = fiducial every frame
 const USE_SCREEN_POSITION = false;
 
-const FIDUCIAL_SIZE = 20; // px, width and height
+const FIDUCIAL_WIDTH = 120; // px
+const FIDUCIAL_HEIGHT = 40; // px
 const FIDUCIAL_LEFT = { r: 3, g: 169, b: 244 }; // cyan
 const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
 const FIDUCIAL_TOLERANCE = 32; // channel threshold — relaxed to handle compression artifacts at edges
@@ -31,25 +32,30 @@ let baseScreenY = 0;
 // Fiducial injection & detection — STABLE, do not modify.
 // Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
-const FIDUCIAL_BORDER = 1; // px, solid black border around each fiducial
-const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_SIZE}px;height:${FIDUCIAL_SIZE}px;z-index:1000;pointer-events:none;border:${FIDUCIAL_BORDER}px solid black;`;
+const FIDUCIAL_BORDER = 1; // px, black border — prevents browser inner-shadow artifacts
+const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid black;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
 const leftFid = document.createElement("div");
 leftFid.style.cssText =
   fidStyle +
   `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
+leftFid.textContent = "LEARN MORE";
 document.body.appendChild(leftFid);
 
 const rightFid = document.createElement("div");
 rightFid.style.cssText =
   fidStyle +
   `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
+rightFid.textContent = "NEXT EFFECT";
 document.body.appendChild(rightFid);
 
 // ---------------------------------------------------------------------------
 // Viewport position detection — STABLE, do not modify.
 // ---------------------------------------------------------------------------
 
-// Pixel colour matchers — total absolute RGB distance from the fiducial colour.
+// Pixel colour matchers — total absolute RGB distance from the fiducial
+// background colour.  Text pixels (50 % black over the background) are
+// intentionally NOT matched so the detector only sees the contiguous
+// background border that surrounds the text on all four sides.
 function isLeftPixel(data, i) {
   return (
     Math.abs(data[i] - FIDUCIAL_LEFT.r) +
@@ -67,73 +73,68 @@ function isRightPixel(data, i) {
   );
 }
 
-// Walk left and up from a matching pixel to find the top-left corner of the block.
-function walkToCorner(data, vw, x, y, testFn) {
-  while (x > 0 && testFn(data, (y * vw + (x - 1)) * 4)) x--;
-  while (y > 0 && testFn(data, ((y - 1) * vw + x) * 4)) y--;
-  return { x, y };
-}
+// Find the fiducial center by scanning a bounded region around a hit pixel
+// for the outermost matching (background-colour) pixels.  The background
+// forms a contiguous border on all four sides of the text, so the bounding
+// box extremes give the true fiducial edges and the midpoint is rock-solid.
+function fiducialCenter(data, vw, vh, hitX, hitY, testFn, searchW, searchH) {
+  const l = Math.max(0, hitX - searchW);
+  const r = Math.min(vw - 1, hitX + searchW);
+  const t = Math.max(0, hitY - searchH);
+  const b = Math.min(vh - 1, hitY + searchH);
 
-// From a corner, find the fiducial center via weighted centroid of all matching pixels.
-// Much more stable than edge-walking: interior pixels dominate, so ±1px edge noise averages out.
-function fiducialCenter(data, vw, vh, cx, cy, testFn) {
-  // First, find the bounding box by walking edges (cheap).
-  let rx = cx;
-  while (rx < vw - 1 && testFn(data, (cy * vw + (rx + 1)) * 4)) rx++;
-  let by = cy;
-  while (by < vh - 1 && testFn(data, ((by + 1) * vw + cx) * 4)) by++;
-
-  // Compute centroid of all matching pixels in the bounding box.
-  let sumX = 0;
-  let sumY = 0;
-  let count = 0;
-  for (let y = cy; y <= by; y++) {
-    for (let x = cx; x <= rx; x++) {
-      if (testFn(data, (y * vw + x) * 4)) {
-        sumX += x;
-        sumY += y;
-        count++;
+  let minX = vw, maxX = 0, minY = vh, maxY = 0;
+  for (let y = t; y <= b; y++) {
+    const row = y * vw;
+    for (let x = l; x <= r; x++) {
+      if (testFn(data, (row + x) * 4)) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
       }
     }
   }
 
-  if (count === 0) return { x: (cx + rx) / 2, y: (cy + by) / 2 };
-  return { x: Math.round(sumX / count), y: Math.round(sumY / count) };
+  if (minX > maxX) return { x: hitX, y: hitY };
+  return {
+    x: Math.round((minX + maxX) / 2),
+    y: Math.round((minY + maxY) / 2),
+  };
 }
 
 // Given the fiducial center in video pixels, return the viewport top-left in CSS pixels.
 function viewportFromMarker(centerX, centerY, which, dpr) {
-  const halfCSS = FIDUCIAL_SIZE / 2;
+  const halfW = FIDUCIAL_WIDTH / 2;
+  const halfH = FIDUCIAL_HEIGHT / 2;
   if (which === "left") {
     return {
-      x: centerX / dpr - FIDUCIAL_BORDER - halfCSS,
-      y: centerY / dpr - FIDUCIAL_BORDER - halfCSS,
+      x: centerX / dpr - FIDUCIAL_BORDER - halfW,
+      y: centerY / dpr - FIDUCIAL_BORDER - halfH,
     };
   }
-  // Right marker: colored center is at viewport.x + innerWidth - FIDUCIAL_BORDER - halfCSS
+  // Right marker: colored center is at viewport.x + innerWidth - FIDUCIAL_BORDER - halfW
   return {
-    x: centerX / dpr - window.innerWidth + FIDUCIAL_BORDER + halfCSS,
-    y: centerY / dpr - FIDUCIAL_BORDER - halfCSS,
+    x: centerX / dpr - window.innerWidth + FIDUCIAL_BORDER + halfW,
+    y: centerY / dpr - FIDUCIAL_BORDER - halfH,
   };
 }
 
 // Read a small region around a point and detect within it.
-// Returns { corner, center, which } or null.
-function detectInRegion(snapCtx, vw, vh, cx, cy, sizePx, testFn, which) {
-  const margin = sizePx + 4; // enough room for walkToCorner + fiducialCenter
+// Returns { center, which } or null.
+function detectInRegion(snapCtx, vw, vh, cx, cy, searchW, searchH, testFn, which) {
+  const margin = Math.max(searchW, searchH) + 4;
   const rx = Math.max(0, cx - margin);
   const ry = Math.max(0, cy - margin);
-  const rw = Math.min(vw - rx, margin * 2 + sizePx);
-  const rh = Math.min(vh - ry, margin * 2 + sizePx);
+  const rw = Math.min(vw - rx, margin * 2 + 1);
+  const rh = Math.min(vh - ry, margin * 2 + 1);
   const data = snapCtx.getImageData(rx, ry, rw, rh).data;
   const lx = cx - rx;
   const ly = cy - ry;
   if (lx < 0 || lx >= rw || ly < 0 || ly >= rh) return null;
   if (!testFn(data, (ly * rw + lx) * 4)) return null;
-  const corner = walkToCorner(data, rw, lx, ly, testFn);
-  const center = fiducialCenter(data, rw, rh, corner.x, corner.y, testFn);
+  const center = fiducialCenter(data, rw, rh, lx, ly, testFn, searchW, searchH);
   return {
-    corner: { x: corner.x + rx, y: corner.y + ry },
     center: { x: center.x + rx, y: center.y + ry },
     which,
   };
@@ -141,12 +142,13 @@ function detectInRegion(snapCtx, vw, vh, cx, cy, sizePx, testFn, which) {
 
 // Find viewport top-left (CSS px) by locating any one fiducial marker.
 function findViewportFiducial(snapCtx, vw, vh, dpr) {
-  const sizePx = Math.round(FIDUCIAL_SIZE * dpr);
+  const widthPx = Math.round(FIDUCIAL_WIDTH * dpr);
+  const heightPx = Math.round(FIDUCIAL_HEIGHT * dpr);
 
-  // Fast path — read only a small region around the last known marker.
+  // Fast path — read only a small region around the last known centre.
   if (lastMarkerPx) {
-    const cx = lastMarkerPx.x + Math.round(sizePx / 2);
-    const cy = lastMarkerPx.y + Math.round(sizePx / 2);
+    const cx = lastMarkerPx.x;
+    const cy = lastMarkerPx.y;
     if (cx >= 0 && cx < vw && cy >= 0 && cy < vh) {
       const testFn =
         lastMarkerPx.which === "right" ? isRightPixel : isLeftPixel;
@@ -156,12 +158,13 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
         vh,
         cx,
         cy,
-        sizePx,
+        widthPx,
+        heightPx,
         testFn,
         lastMarkerPx.which,
       );
       if (hit) {
-        lastMarkerPx = { x: hit.corner.x, y: hit.corner.y, which: hit.which };
+        lastMarkerPx = { x: hit.center.x, y: hit.center.y, which: hit.which };
         return viewportFromMarker(hit.center.x, hit.center.y, hit.which, dpr);
       }
     }
@@ -169,7 +172,7 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
 
   // Full scan fallback — read entire frame.
   const data = snapCtx.getImageData(0, 0, vw, vh).data;
-  const stride = Math.max(1, Math.floor(sizePx / 2));
+  const stride = Math.max(1, Math.floor(heightPx / 2));
   for (let i = 0; i < data.length; i += 4 * stride) {
     let which = null;
     let testFn = null;
@@ -183,9 +186,8 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
 
     const px = (i / 4) % vw;
     const py = Math.floor(i / 4 / vw);
-    const corner = walkToCorner(data, vw, px, py, testFn);
-    const center = fiducialCenter(data, vw, vh, corner.x, corner.y, testFn);
-    lastMarkerPx = { x: corner.x, y: corner.y, which };
+    const center = fiducialCenter(data, vw, vh, px, py, testFn, widthPx, heightPx);
+    lastMarkerPx = { x: center.x, y: center.y, which };
     return viewportFromMarker(center.x, center.y, which, dpr);
   }
 
@@ -198,7 +200,6 @@ function findViewportPosition(snapCtx, vw, vh, dpr) {
 }
 
 const shareBtn = document.getElementById("share-btn");
-const overlayBtn = document.getElementById("overlay-btn");
 const crtOverlay = document.getElementById("crt-overlay");
 const gbOverlay = document.getElementById("gb-overlay");
 const glassOverlay = document.getElementById("glass-overlay");
@@ -219,7 +220,8 @@ const FILTER_LABELS = {
   glass: "No FX",
 };
 
-overlayBtn.addEventListener("click", function () {
+// Right fiducial doubles as the "Next Effect" button.
+rightFid.addEventListener("click", function () {
   const idx = FILTER_CYCLE.indexOf(activeFilter);
   activeFilter = FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length];
 
@@ -245,8 +247,6 @@ overlayBtn.addEventListener("click", function () {
   } else {
     hideGlassFilter();
   }
-
-  overlayBtn.textContent = FILTER_LABELS[activeFilter];
 });
 
 shareBtn.addEventListener(
@@ -255,7 +255,6 @@ shareBtn.addEventListener(
     if (isPlaying) return;
     isPlaying = true;
     shareBtn.style.display = "none";
-    overlayBtn.style.display = "block";
 
     navigator.mediaDevices
       .getDisplayMedia({
