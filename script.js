@@ -43,7 +43,9 @@ const leftFid = document.createElement("a");
 leftFid.href = LEARN_MORE_URL;
 leftFid.target = "_blank";
 leftFid.rel = "noopener";
-leftFid.style.cssText = fidStyle + `left:0;background:black;color:white;text-decoration:none;display:none;`;
+leftFid.style.cssText =
+  fidStyle +
+  `left:0;background:black;color:white;text-decoration:none;display:none;`;
 leftFid.textContent = "LEARN MORE";
 document.body.appendChild(leftFid);
 
@@ -483,7 +485,7 @@ shareBtn.addEventListener(
                 displayX = targetX;
                 displayY = targetY;
               } else {
-                const displayWeight = 0.333; // more inertia = smoother but more lag
+                const displayWeight = 0.4; // more inertia = smoother but more lag
                 displayX =
                   displayX * displayWeight + targetX * (1 - displayWeight);
                 displayY =
@@ -500,11 +502,11 @@ shareBtn.addEventListener(
             prevDisplayX = displayX;
             prevDisplayY = displayY;
 
-            // if (speed > 0.1) {
-            //   canvasEl.style.filter = `blur(${speed * 2}px)`;
-            // } else {
-            //   canvasEl.style.filter = "";
-            // }
+            if (speed > 0.1) {
+              canvasEl.style.filter = `blur(${speed * 2}px)`;
+            } else {
+              canvasEl.style.filter = "";
+            }
 
             const dpr =
               videoEl.videoWidth / screen.width || window.devicePixelRatio;
