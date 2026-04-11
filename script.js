@@ -6,8 +6,15 @@ const USE_SCREEN_POSITION = false;
 
 const FIDUCIAL_WIDTH = 120; // px
 const FIDUCIAL_HEIGHT = 40; // px
-const FIDUCIAL_LEFT = { r: 3, g: 169, b: 244 }; // cyan
-const FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // magenta
+const FIDUCIAL_CANDIDATES = [
+  { name: "cyan", r: 3, g: 169, b: 244 },
+  { name: "orange", r: 255, g: 152, b: 0 },
+  { name: "green", r: 76, g: 175, b: 80 },
+  { name: "magenta", r: 255, g: 0, b: 255 },
+];
+let FIDUCIAL_LEFT = { r: 3, g: 169, b: 244 }; // chosen after first frame
+let FIDUCIAL_RIGHT = { r: 255, g: 0, b: 255 }; // chosen after first frame
+let fiducialsChosen = false;
 const FIDUCIAL_TOLERANCE = 32; // channel threshold — relaxed to handle compression artifacts at edges
 
 // Browser chrome (tabs, address bar, shadow, etc.) in CSS pixels.
@@ -33,18 +40,15 @@ let baseScreenY = 0;
 // Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
 const FIDUCIAL_BORDER = 1; // px, black border — prevents browser inner-shadow artifacts
-const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid black;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
+const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid #000000;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
 const leftFid = document.createElement("div");
-leftFid.style.cssText =
-  fidStyle +
-  `left:0;background:rgb(${FIDUCIAL_LEFT.r},${FIDUCIAL_LEFT.g},${FIDUCIAL_LEFT.b});`;
+leftFid.style.cssText = fidStyle + `left:0;background:black;color:white;`;
 leftFid.textContent = "LEARN MORE";
 document.body.appendChild(leftFid);
 
 const rightFid = document.createElement("div");
 rightFid.style.cssText =
-  fidStyle +
-  `right:0;background:rgb(${FIDUCIAL_RIGHT.r},${FIDUCIAL_RIGHT.g},${FIDUCIAL_RIGHT.b});`;
+  fidStyle + `right:0;background:black;color:white;display:none;`;
 rightFid.textContent = "NEXT EFFECT";
 document.body.appendChild(rightFid);
 
@@ -83,7 +87,10 @@ function fiducialCenter(data, vw, vh, hitX, hitY, testFn, searchW, searchH) {
   const t = Math.max(0, hitY - searchH);
   const b = Math.min(vh - 1, hitY + searchH);
 
-  let minX = vw, maxX = 0, minY = vh, maxY = 0;
+  let minX = vw,
+    maxX = 0,
+    minY = vh,
+    maxY = 0;
   for (let y = t; y <= b; y++) {
     const row = y * vw;
     for (let x = l; x <= r; x++) {
@@ -122,7 +129,17 @@ function viewportFromMarker(centerX, centerY, which, dpr) {
 
 // Read a small region around a point and detect within it.
 // Returns { center, which } or null.
-function detectInRegion(snapCtx, vw, vh, cx, cy, searchW, searchH, testFn, which) {
+function detectInRegion(
+  snapCtx,
+  vw,
+  vh,
+  cx,
+  cy,
+  searchW,
+  searchH,
+  testFn,
+  which,
+) {
   const margin = Math.max(searchW, searchH) + 4;
   const rx = Math.max(0, cx - margin);
   const ry = Math.max(0, cy - margin);
@@ -186,13 +203,55 @@ function findViewportFiducial(snapCtx, vw, vh, dpr) {
 
     const px = (i / 4) % vw;
     const py = Math.floor(i / 4 / vw);
-    const center = fiducialCenter(data, vw, vh, px, py, testFn, widthPx, heightPx);
+    const center = fiducialCenter(
+      data,
+      vw,
+      vh,
+      px,
+      py,
+      testFn,
+      widthPx,
+      heightPx,
+    );
     lastMarkerPx = { x: center.x, y: center.y, which };
     return viewportFromMarker(center.x, center.y, which, dpr);
   }
 
   lastMarkerPx = null;
   return null;
+}
+
+// Scan a frame and pick the 2 candidate colors least present on screen.
+function chooseFiducialColors(snapCtx, vw, vh) {
+  const data = snapCtx.getImageData(0, 0, vw, vh).data;
+  const stride = Math.max(1, Math.floor((vw * vh) / 10000)); // ~10k samples
+  const scores = FIDUCIAL_CANDIDATES.map((c) => {
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4 * stride) {
+      if (
+        Math.abs(data[i] - c.r) +
+          Math.abs(data[i + 1] - c.g) +
+          Math.abs(data[i + 2] - c.b) <
+        FIDUCIAL_TOLERANCE
+      ) {
+        count++;
+      }
+    }
+    return { candidate: c, count };
+  });
+  scores.sort((a, b) => a.count - b.count);
+  return [scores[0].candidate, scores[1].candidate];
+}
+
+function applyFiducialColors(left, right) {
+  FIDUCIAL_LEFT = left;
+  FIDUCIAL_RIGHT = right;
+  leftFid.style.background = `rgb(${left.r},${left.g},${left.b})`;
+  leftFid.style.color = "rgba(0,0,0,0.5)";
+  rightFid.style.display = "flex";
+  rightFid.style.background = `rgb(${right.r},${right.g},${right.b})`;
+  rightFid.style.color = "rgba(0,0,0,0.5)";
+  fiducialsChosen = true;
 }
 
 function findViewportPosition(snapCtx, vw, vh, dpr) {
@@ -254,7 +313,7 @@ shareBtn.addEventListener(
   function () {
     if (isPlaying) return;
     isPlaying = true;
-    shareBtn.style.display = "none";
+    document.getElementById("intro").style.display = "none";
 
     navigator.mediaDevices
       .getDisplayMedia({
@@ -334,6 +393,19 @@ shareBtn.addEventListener(
             snapCanvas.height = videoEl.videoHeight;
           }
           snapCtx.drawImage(videoEl, 0, 0);
+
+          // On first frame, pick the two least-problematic fiducial colors.
+          if (!fiducialsChosen) {
+            const [best1, best2] = chooseFiducialColors(
+              snapCtx,
+              videoEl.videoWidth,
+              videoEl.videoHeight,
+            );
+            applyFiducialColors(best1, best2);
+            // Re-snapshot after colors are applied so detection sees the new fiducials.
+            requestAnimationFrame(captureLoop);
+            return;
+          }
 
           // --- Find browser viewport position on screen ---
           const vw = videoEl.videoWidth;

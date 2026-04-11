@@ -23,9 +23,9 @@ uniform vec2 u_resolution;
 uniform float u_time;
 
 // --- CRT parameters (tuned to look like a nice curved monitor) ---
-const float CURVATURE    = 0.18;   // barrel distortion strength
+const float CURVATURE    = 0.20;   // barrel distortion strength
 const float CORNER_SIZE  = 0.04;   // rounded corner radius
-const float CORNER_SMOOTH = 600.0; // corner edge softness
+const float CORNER_SMOOTH = 650.0; // corner edge softness
 
 const float SCANLINE_WEIGHT = 0.65; // how dark the scanlines get
 const float SCANLINE_SPEED  = 0.0;  // rolling scanline (0 = off)
