@@ -441,3 +441,24 @@ function renderGameboyFrame(sourceCanvas, displayX, displayY, dpr) {
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
+
+/* ── Liquid Diamond filter ── */
+
+let _diamondInstance = null;
+
+function initGlassFilter(overlayEl) {
+  _diamondInstance = window.attachLiquidPyramid({ parent: overlayEl });
+  return true;
+}
+
+function showGlassFilter() {
+  if (_diamondInstance) _diamondInstance.show();
+}
+
+function hideGlassFilter() {
+  if (_diamondInstance) _diamondInstance.hide();
+}
+
+function updateDiamondRotation(ox, oy) {
+  if (_diamondInstance) _diamondInstance.setRotation(ox, oy);
+}

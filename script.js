@@ -201,13 +201,23 @@ const shareBtn = document.getElementById("share-btn");
 const overlayBtn = document.getElementById("overlay-btn");
 const crtOverlay = document.getElementById("crt-overlay");
 const gbOverlay = document.getElementById("gb-overlay");
+const glassOverlay = document.getElementById("glass-overlay");
 
-let activeFilter = "none"; // "none" | "crt" | "gameboy"
+let activeFilter = "none"; // "none" | "crt" | "gameboy" | "glass"
 let crtInited = false;
 let gbInited = false;
+let glassInited = false;
+let diamondFrameCount = 0;
+let diamondBaseX = null;
+let diamondBaseY = null;
 
-const FILTER_CYCLE = ["none", "crt", "gameboy"];
-const FILTER_LABELS = { none: "CRT", crt: "Gameboy", gameboy: "No FX" };
+const FILTER_CYCLE = ["none", "crt", "gameboy", "glass"];
+const FILTER_LABELS = {
+  none: "CRT",
+  crt: "Gameboy",
+  gameboy: "Glass",
+  glass: "No FX",
+};
 
 overlayBtn.addEventListener("click", function () {
   const idx = FILTER_CYCLE.indexOf(activeFilter);
@@ -219,9 +229,23 @@ overlayBtn.addEventListener("click", function () {
   if (activeFilter === "gameboy" && !gbInited) {
     gbInited = initGameboyFilter(gbOverlay);
   }
+  if (activeFilter === "glass" && !glassInited) {
+    glassInited = initGlassFilter(glassOverlay);
+  }
 
   crtOverlay.classList.toggle("active", activeFilter === "crt");
   gbOverlay.classList.toggle("active", activeFilter === "gameboy");
+  glassOverlay.classList.toggle("active", activeFilter === "glass");
+
+  if (activeFilter === "glass") {
+    showGlassFilter();
+    diamondFrameCount = 0;
+    diamondBaseX = null;
+    diamondBaseY = null;
+  } else {
+    hideGlassFilter();
+  }
+
   overlayBtn.textContent = FILTER_LABELS[activeFilter];
 });
 
@@ -418,11 +442,11 @@ shareBtn.addEventListener(
             prevDisplayX = displayX;
             prevDisplayY = displayY;
 
-            if (speed > 0.1) {
-              canvasEl.style.filter = `blur(${speed * 2}px)`;
-            } else {
-              canvasEl.style.filter = "";
-            }
+            // if (speed > 0.1) {
+            //   canvasEl.style.filter = `blur(${speed * 2}px)`;
+            // } else {
+            //   canvasEl.style.filter = "";
+            // }
 
             const dpr =
               videoEl.videoWidth / screen.width || window.devicePixelRatio;
@@ -444,6 +468,17 @@ shareBtn.addEventListener(
               renderCRTFrame(canvasEl, displayX, displayY, dpr);
             } else if (activeFilter === "gameboy" && gbInited) {
               renderGameboyFrame(canvasEl, displayX, displayY, dpr);
+            } else if (activeFilter === "glass" && glassInited) {
+              if (diamondBaseX === null) {
+                diamondBaseX = displayX;
+                diamondBaseY = displayY;
+              }
+              if (diamondFrameCount++ % 2 === 0) {
+                updateDiamondRotation(
+                  displayX - diamondBaseX,
+                  displayY - diamondBaseY,
+                );
+              }
             }
           }
           requestAnimationFrame(displayLoop);
