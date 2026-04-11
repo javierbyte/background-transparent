@@ -88,3 +88,20 @@ canvas.draw {
   display: block;
 }
 
+/* Gameboy overlay — WebGL canvas */
+#gb-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 900;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+#gb-overlay.active {
+  display: block;
+}
+

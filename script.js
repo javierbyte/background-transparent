@@ -200,17 +200,29 @@ function findViewportPosition(snapCtx, vw, vh, dpr) {
 const shareBtn = document.getElementById("share-btn");
 const overlayBtn = document.getElementById("overlay-btn");
 const crtOverlay = document.getElementById("crt-overlay");
+const gbOverlay = document.getElementById("gb-overlay");
 
-let crtActive = false;
+let activeFilter = "none"; // "none" | "crt" | "gameboy"
 let crtInited = false;
+let gbInited = false;
+
+const FILTER_CYCLE = ["none", "crt", "gameboy"];
+const FILTER_LABELS = { none: "CRT", crt: "Gameboy", gameboy: "No FX" };
 
 overlayBtn.addEventListener("click", function () {
-  crtActive = !crtActive;
-  if (crtActive && !crtInited) {
+  const idx = FILTER_CYCLE.indexOf(activeFilter);
+  activeFilter = FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length];
+
+  if (activeFilter === "crt" && !crtInited) {
     crtInited = initCRTFilter(crtOverlay);
   }
-  crtOverlay.classList.toggle("active", crtActive);
-  overlayBtn.textContent = crtActive ? "No FX" : "CRT";
+  if (activeFilter === "gameboy" && !gbInited) {
+    gbInited = initGameboyFilter(gbOverlay);
+  }
+
+  crtOverlay.classList.toggle("active", activeFilter === "crt");
+  gbOverlay.classList.toggle("active", activeFilter === "gameboy");
+  overlayBtn.textContent = FILTER_LABELS[activeFilter];
 });
 
 shareBtn.addEventListener(
@@ -427,9 +439,11 @@ shareBtn.addEventListener(
               Math.round(displayY) + padY,
             );
 
-            // Render CRT shader overlay when active
-            if (crtActive && crtInited) {
+            // Render shader overlay when active
+            if (activeFilter === "crt" && crtInited) {
               renderCRTFrame(canvasEl, displayX, displayY, dpr);
+            } else if (activeFilter === "gameboy" && gbInited) {
+              renderGameboyFrame(canvasEl, displayX, displayY, dpr);
             }
           }
           requestAnimationFrame(displayLoop);

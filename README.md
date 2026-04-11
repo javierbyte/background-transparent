@@ -12,8 +12,6 @@ Fake `background: transparent` for a browser window using a screen sharing video
 4. **Build a background buffer.** Each frame, the captured screen image is drawn to a canvas — but the area covering the browser window (viewport + chrome + a small padding) is cut out. Over time this accumulates the content behind the browser.
 5. **Render.** The canvas is translated so the portion behind the viewport is shown, simulating a transparent background. As the window moves, the offset updates and the illusion follows.
 
-# Design
+# Inspiration
 
-It is all communicated through the video buffer. It all starts with a video buffer all black of the size of the screen, with centered text.
-"Please click to share the screen this browser is on":
-Once that is done, it changes to "Please move the browser" if the browser is less than 1/2 of the area of the screen, or "Make the browser smaller to continue" if not.
+- https://github.com/mausimus/ShaderGlass I saw a tweet once and tried my best to recreate the experience of the CRT window.
