@@ -4,7 +4,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Document</title>
+  <title>Background Transparent — See Through Your Browser</title>
+  <meta name="description" content="Share your screen and make your browser background transparent. Move the window around to see through it in real time." />
+  <link rel="canonical" href="https://backgroundtransparent.vercel.app/" />
+  <meta name="theme-color" content="#000000" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://backgroundtransparent.vercel.app/" />
+  <meta property="og:title" content="Background Transparent — See Through Your Browser" />
+  <meta property="og:description" content="Share your screen and make your browser background transparent. Move the window around to see through it in real time." />
+  <meta property="og:image" content="https://backgroundtransparent.vercel.app/background-transparent.jpg" />
+  <meta property="og:site_name" content="Background Transparent" />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Background Transparent — See Through Your Browser" />
+  <meta name="twitter:description" content="Share your screen and make your browser background transparent. Move the window around to see through it in real time." />
+  <meta name="twitter:image" content="https://backgroundtransparent.vercel.app/background-transparent.jpg" />
+  <meta name="twitter:creator" content="@jaaborja" />
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -17,9 +35,12 @@
   <div id="glass-overlay"></div>
 
   <div id="intro">
-    <code>body {background: 'transparent'}</code>
-    <p>Share your current screen, make the browser window small and move it around.</p>
+    <code>body {background: transparent}</code>
+    <p>
+      Share your current screen.<br />
+      Make the browser window small, move it around.</p>
     <button id="share-btn">Share Current Screen</button>
+    <a id="learn-more-link" href="#" target="_blank" rel="noopener">Learn More</a>
   </div>
 
   <script src="vendor/liquid-glass/liquid-diamond.js"></script>

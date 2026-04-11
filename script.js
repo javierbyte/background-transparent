@@ -4,8 +4,8 @@ const canvasEl = document.querySelector("canvas.draw");
 // Mode toggle: true = fiducial for initial calibration then screenX/Y, false = fiducial every frame
 const USE_SCREEN_POSITION = false;
 
-const FIDUCIAL_WIDTH = 120; // px
-const FIDUCIAL_HEIGHT = 40; // px
+const FIDUCIAL_WIDTH = 112; // px
+const FIDUCIAL_HEIGHT = 30; // px
 const FIDUCIAL_CANDIDATES = [
   { name: "cyan", r: 3, g: 169, b: 244 },
   { name: "orange", r: 255, g: 152, b: 0 },
@@ -22,6 +22,8 @@ const CHROME_TOP = 128;
 const CHROME_BOTTOM = 64;
 const CHROME_RIGHT = 64;
 const CHROME_LEFT = 64;
+
+const LEARN_MORE_URL = "https://github.com/javierbyte/background-transparent";
 
 let isPlaying = false;
 
@@ -40,9 +42,12 @@ let baseScreenY = 0;
 // Handles: partial off-screen, single-marker fallback, fast-path caching.
 // ---------------------------------------------------------------------------
 const FIDUCIAL_BORDER = 1; // px, black border — prevents browser inner-shadow artifacts
-const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid #000000;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
-const leftFid = document.createElement("div");
-leftFid.style.cssText = fidStyle + `left:0;background:black;color:white;`;
+const fidStyle = `position:fixed;top:0;width:${FIDUCIAL_WIDTH}px;height:${FIDUCIAL_HEIGHT}px;z-index:1000;border:${FIDUCIAL_BORDER}px solid #000000;display:flex;align-items:center;justify-content:center;font-size:0.8125rem;font-weight:700;font-family:system-ui,sans-serif;color:rgba(0,0,0,0.5);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;`;
+const leftFid = document.createElement("a");
+leftFid.href = LEARN_MORE_URL;
+leftFid.target = "_blank";
+leftFid.rel = "noopener";
+leftFid.style.cssText = fidStyle + `left:0;background:black;color:white;text-decoration:none;display:none;`;
 leftFid.textContent = "LEARN MORE";
 document.body.appendChild(leftFid);
 
@@ -246,6 +251,7 @@ function chooseFiducialColors(snapCtx, vw, vh) {
 function applyFiducialColors(left, right) {
   FIDUCIAL_LEFT = left;
   FIDUCIAL_RIGHT = right;
+  leftFid.style.display = "flex";
   leftFid.style.background = `rgb(${left.r},${left.g},${left.b})`;
   leftFid.style.color = "rgba(0,0,0,0.5)";
   rightFid.style.display = "flex";
@@ -259,6 +265,7 @@ function findViewportPosition(snapCtx, vw, vh, dpr) {
 }
 
 const shareBtn = document.getElementById("share-btn");
+document.getElementById("learn-more-link").href = LEARN_MORE_URL;
 const crtOverlay = document.getElementById("crt-overlay");
 const gbOverlay = document.getElementById("gb-overlay");
 const glassOverlay = document.getElementById("glass-overlay");

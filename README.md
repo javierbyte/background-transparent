@@ -2,6 +2,8 @@
 
 Fake `background: transparent` for a browser window using a screen sharing video feed.
 
+![Background Transparent](background-transparent.jpg)
+
 ## How it works
 
 1. **Screen capture.** The page asks to share the full screen that the browser window is on.
@@ -14,5 +16,5 @@ Fake `background: transparent` for a browser window using a screen sharing video
 
 # Inspiration
 
-- https://github.com/mausimus/ShaderGlass I saw a tweet once and tried my best to recreate the experience of the CRT window.
-- https://github.com/shuding/liquid-glass/blob/main/liquid-diamond.js Shu liquid diamond
+- I saw [this tweet](https://x.com/mausmoto/status/1892788765577322858) from [@mausmoto](https://x.com/mausmoto/status/1892788765577322858) about https://github.com/mausimus/ShaderGlass and since then it has been something I've been wishing I could do in the web. Well, one day I got this idea so I give it a try. The repo also served as inspiration for the CRT filter.
+- https://github.com/shuding/liquid-glass/blob/main/liquid-diamond.js [@shuding](https://x.com/shuding) liquid diamond and IRL inspiration to get more into shaders.
