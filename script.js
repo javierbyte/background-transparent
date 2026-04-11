@@ -503,7 +503,7 @@ shareBtn.addEventListener(
             prevDisplayY = displayY;
 
             if (speed > 0.1) {
-              canvasEl.style.filter = `blur(${speed * 2}px)`;
+              canvasEl.style.filter = `blur(${speed * 0.5}px)`;
             } else {
               canvasEl.style.filter = "";
             }
