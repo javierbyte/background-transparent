@@ -19,7 +19,7 @@ I ended up separating the "measure and update buffer" step from a different one 
 
 ## Inspiration
 
-- I saw [this tweet](https://x.com/mausmoto/status/1892788765577322858) from [@mausmoto](https://x.com/mausmoto/status/1892788765577322858) about https://github.com/mausimus/ShaderGlass and since then it has been something I've been wishing I could do in the web. Well, one day I got this idea so I give it a try. The repo also served as inspiration for the CRT filter.
+- I saw [this tweet](https://x.com/mausmoto/status/1892788765577322858) from [@mausmoto](https://x.com/mausmoto) about https://github.com/mausimus/ShaderGlass and since then it has been something I've been wishing I could do in the web. Well, one day I got this idea so I give it a try. The repo also served as inspiration for the CRT filter.
 - https://github.com/shuding/liquid-glass/blob/main/liquid-diamond.js this project [@shuding](https://x.com/shuding) showed me IRL pairs well with this demo, also served as inspiration to get more into shaders.
 
 ## Is there any practical usage?
