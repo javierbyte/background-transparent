@@ -136,3 +136,85 @@ canvas.draw {
 #glass-overlay.active {
   display: block;
 }
+
+#translate-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 900;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#translate-overlay.active {
+  display: block;
+}
+
+.translate-box {
+  position: absolute;
+  backdrop-filter: blur(32px) brightness(1.25);
+  background: transparent;
+  color: black;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  line-height: 1;
+  padding: 1px 3px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: black;
+  text-align: center;
+}
+
+#ocr-debug-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 900;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#ocr-debug-overlay.active {
+  display: block;
+}
+
+.ocr-debug-label {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.85);
+  color: #0f0;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.translate-status {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  color: rgba(255, 255, 255, 0.8);
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  pointer-events: none;
+}

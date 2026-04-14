@@ -36,6 +36,8 @@
   <canvas id="crt-overlay"></canvas>
   <canvas id="gb-overlay"></canvas>
   <div id="glass-overlay"></div>
+  <div id="translate-overlay"></div>
+  <div id="ocr-debug-overlay"></div>
 
   <div id="intro">
     <code>body {background: transparent}</code>
@@ -51,6 +53,16 @@
   </div>
 
   <script src="vendor/shuding-liquid-diamond/liquid-diamond.js"></script>
+  <script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.dispatchEvent(new Event('opencv-ready'))"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+  <script>
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+  </script>
+  <script type="module">
+    import * as Paddle from "https://cdn.jsdelivr.net/npm/esearch-ocr@5.1.5/dist/esearch-ocr.js";
+    window.Paddle = Paddle;
+    window.dispatchEvent(new Event("paddle-ready"));
+  </script>
   <script src="filters.js"></script>
   <script src="script.js"></script>
 </body>

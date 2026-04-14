@@ -252,28 +252,46 @@ document.getElementById("learn-more-link").href = LEARN_MORE_URL;
 const crtOverlay = document.getElementById("crt-overlay");
 const gbOverlay = document.getElementById("gb-overlay");
 const glassOverlay = document.getElementById("glass-overlay");
+const translateOverlay = document.getElementById("translate-overlay");
+const ocrDebugOverlay = document.getElementById("ocr-debug-overlay");
+const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
-let activeFilter = "none"; // "none" | "crt" | "gameboy" | "glass"
+let activeFilter = "none"; // "none" | "crt" | "gameboy" | "glass" | "translate" | "ocr-debug"
 let crtInited = false;
 let gbInited = false;
 let glassInited = false;
+let translateInited = false;
+let ocrDebugInited = false;
 let diamondFrameCount = 0;
 let diamondBaseX = null;
 let diamondBaseY = null;
 
-const FILTER_CYCLE = ["none", "crt", "gameboy", "glass"];
+const FILTER_CYCLE = IS_LOCAL
+  ? ["none", "crt", "gameboy", "translate", "glass", "ocr-debug"]
+  : ["none", "crt", "gameboy", "translate", "glass"];
 const FILTER_LABELS = {
   none: "CRT",
   crt: "Gameboy",
-  gameboy: "Glass",
-  glass: "No FX",
+  gameboy: "German Glasses",
+  translate: "@Shuding Liquid Diamond",
+  glass: IS_LOCAL ? "OCR Debug" : "Background Transparent",
+  "ocr-debug": "Background Transparent",
+};
+const FILTER_TITLES = {
+  none: "Background Transparent",
+  crt: "CRT",
+  gameboy: "Gameboy",
+  translate: "German Glasses",
+  glass: "@Shuding Liquid Diamond",
+  "ocr-debug": "OCR Debug",
 };
 
 rightFid.addEventListener("click", function () {
   const idx = FILTER_CYCLE.indexOf(activeFilter);
   activeFilter = FILTER_CYCLE[(idx + 1) % FILTER_CYCLE.length];
+  document.title = FILTER_TITLES[activeFilter] || "Background Transparent";
 
-  if (activeFilter === "crt" && !crtInited) {
+  if ((activeFilter === "crt" || activeFilter === "translate") && !crtInited) {
     crtInited = initCRTFilter(crtOverlay);
   }
   if (activeFilter === "gameboy" && !gbInited) {
@@ -282,10 +300,18 @@ rightFid.addEventListener("click", function () {
   if (activeFilter === "glass" && !glassInited) {
     glassInited = initGlassFilter(glassOverlay);
   }
+  if (activeFilter === "translate" && !translateInited) {
+    translateInited = initTranslateFilter(translateOverlay);
+  }
+  if (activeFilter === "ocr-debug" && !ocrDebugInited) {
+    ocrDebugInited = initOcrDebugFilter(ocrDebugOverlay);
+  }
 
-  crtOverlay.classList.toggle("active", activeFilter === "crt");
+  crtOverlay.classList.toggle("active", activeFilter === "crt" || activeFilter === "translate");
   gbOverlay.classList.toggle("active", activeFilter === "gameboy");
   glassOverlay.classList.toggle("active", activeFilter === "glass");
+  translateOverlay.classList.toggle("active", activeFilter === "translate");
+  ocrDebugOverlay.classList.toggle("active", activeFilter === "ocr-debug");
 
   if (activeFilter === "glass") {
     showGlassFilter();
@@ -294,6 +320,18 @@ rightFid.addEventListener("click", function () {
     diamondBaseY = null;
   } else {
     hideGlassFilter();
+  }
+
+  if (activeFilter === "translate") {
+    showTranslateFilter();
+  } else {
+    hideTranslateFilter();
+  }
+
+  if (activeFilter === "ocr-debug") {
+    showOcrDebugFilter();
+  } else {
+    hideOcrDebugFilter();
   }
 });
 
@@ -502,7 +540,9 @@ shareBtn.addEventListener(
             prevDisplayX = displayX;
             prevDisplayY = displayY;
 
-            if (speed > 0.1) {
+            if (activeFilter === "translate") {
+              canvasEl.style.filter = "";
+            } else if (speed > 0.1) {
               canvasEl.style.filter = `blur(${speed * 0.5}px)`;
             } else {
               canvasEl.style.filter = "";
@@ -524,9 +564,10 @@ shareBtn.addEventListener(
             );
 
             // Render shader overlay when active
-            if (activeFilter === "crt" && crtInited) {
+            if ((activeFilter === "crt" || activeFilter === "translate") && crtInited) {
               renderCRTFrame(canvasEl, displayX, displayY, dpr);
-            } else if (activeFilter === "gameboy" && gbInited) {
+            }
+            if (activeFilter === "gameboy" && gbInited) {
               renderGameboyFrame(canvasEl, displayX, displayY, dpr);
             } else if (activeFilter === "glass" && glassInited) {
               if (diamondBaseX === null) {
@@ -539,6 +580,10 @@ shareBtn.addEventListener(
                   displayY - diamondBaseY,
                 );
               }
+            } else if (activeFilter === "translate" && translateInited) {
+              renderTranslateFrame(canvasEl, displayX, displayY, dpr);
+            } else if (activeFilter === "ocr-debug" && ocrDebugInited) {
+              renderOcrDebugFrame(canvasEl, displayX, displayY, dpr);
             }
           }
           requestAnimationFrame(displayLoop);

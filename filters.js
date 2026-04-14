@@ -427,3 +427,412 @@ function hideGlassFilter() {
 function updateDiamondRotation(ox, oy) {
   if (_diamondInstance) _diamondInstance.setRotation(ox, oy);
 }
+
+// Translate filter (OCR via PaddleOCR + translation)
+
+let _trOverlay = null;
+let _trBoxContainer = null;
+let _trOcrInstance = null;
+let _trReady = false;
+let _trBusy = false;
+let _trResults = null;
+let _trResultsDirty = false;
+let _trLastOcrX = 0;
+let _trLastOcrY = 0;
+let _trLastOcrTime = 0;
+let _trLastMoveTime = 0;
+let _trPrevX = null;
+let _trPrevY = null;
+const TR_MOVE_SETTLE_MS = 64;
+let _trFeedCanvas = null;
+let _trFeedCtx = null;
+let _trTranslator = null;
+let _trCache = new Map();
+let _trCacheVersion = 0;
+let _trRenderedCacheVersion = 0;
+let _trOcrW = 0;
+let _trOcrH = 0;
+
+const TR_OCR_MAX_WIDTH = 1500;
+const TR_OCR_COOLDOWN = 2000;
+const TR_OCR_FORCE_INTERVAL = 4000;
+const TR_OCR_MOVE_THRESHOLD = 50;
+const TR_CONFIDENCE_MIN = 0.4;
+const TR_TEXT_RE = /\p{Letter}{2,}/u;
+const PADDLE_ASSETS = "https://cdn.jsdelivr.net/npm/paddleocr-browser/dist/";
+
+function _trIsText(str) {
+  if (!TR_TEXT_RE.test(str)) return false;
+  const letters = str.replace(/[^\p{Letter}]/gu, "").length;
+  return letters / str.length >= 0.5;
+}
+
+// Compute axis-aligned rect + rotation from a quadrilateral box [[x,y], [x,y], [x,y], [x,y]]
+function _trQuadToRect(box, ocrW, ocrH, iw, ih) {
+  const [tl, tr, br, bl] = box.map((p) => [
+    (p[0] / ocrW) * iw,
+    (p[1] / ocrH) * ih,
+  ]);
+  const left = Math.min(tl[0], bl[0]);
+  const top = Math.min(tl[1], tr[1]);
+  const right = Math.max(tr[0], br[0]);
+  const bottom = Math.max(bl[1], br[1]);
+  const width = right - left;
+  const height = bottom - top;
+  const angle = Math.atan2(tr[1] - tl[1], tr[0] - tl[0]);
+  // Box height from left edge (for font sizing)
+  const boxH = Math.hypot(bl[0] - tl[0], bl[1] - tl[1]);
+  return { left, top, width, height, angle, boxH };
+}
+
+async function _trInitPaddle(statusEl) {
+  // Wait for Paddle module to be available
+  if (!window.Paddle) {
+    await new Promise((resolve) => {
+      window.addEventListener("paddle-ready", resolve, { once: true });
+    });
+  }
+
+  if (statusEl) statusEl.textContent = "Loading OCR models...";
+
+  // Wait for OpenCV.js WASM to fully initialize
+  if (!window.cv || typeof window.cv.matFromImageData !== "function") {
+    await new Promise((resolve) => {
+      function onCvReady() {
+        if (typeof window.cv === "function") {
+          window.cv().then((cvModule) => {
+            window.cv = cvModule;
+            resolve();
+          });
+        } else if (
+          window.cv &&
+          typeof window.cv.matFromImageData === "function"
+        ) {
+          resolve();
+        } else if (window.cv) {
+          const orig = window.cv.onRuntimeInitialized;
+          window.cv.onRuntimeInitialized = () => {
+            if (orig) orig();
+            resolve();
+          };
+        } else {
+          const id = setInterval(() => {
+            if (window.cv && typeof window.cv.matFromImageData === "function") {
+              clearInterval(id);
+              resolve();
+            }
+          }, 100);
+        }
+      }
+      if (window.cv) {
+        onCvReady();
+      } else {
+        window.addEventListener("opencv-ready", onCvReady, { once: true });
+      }
+    });
+  }
+
+  // Fetch dictionary text (esearch-ocr expects content via `dic`, not a path)
+  const dicText = await fetch(PADDLE_ASSETS + "ppocr_keys_v1.txt").then((r) =>
+    r.text(),
+  );
+
+  if (statusEl) statusEl.textContent = "Initializing OCR...";
+
+  // esearch-ocr v5 internal API uses flat props: detPath, recPath, dic, cv, ort
+  _trOcrInstance = await window.Paddle.init({
+    detPath: PADDLE_ASSETS + "ppocr_det.onnx",
+    recPath: PADDLE_ASSETS + "ppocr_rec.onnx",
+    dic: dicText,
+    cv: window.cv,
+    ort: window.ort,
+  });
+
+  _trReady = true;
+}
+
+function initTranslateFilter(overlayEl) {
+  _trOverlay = overlayEl;
+  _trFeedCanvas = document.createElement("canvas");
+  _trFeedCtx = _trFeedCanvas.getContext("2d");
+
+  _trBoxContainer = document.createElement("div");
+  _trBoxContainer.style.cssText =
+    "position:absolute;top:0;left:0;width:100%;height:100%;will-change:transform";
+  _trOverlay.appendChild(_trBoxContainer);
+
+  _trOverlay.insertAdjacentHTML(
+    "beforeend",
+    '<div class="translate-status">Loading OCR engine...</div>',
+  );
+
+  const statusEl = _trOverlay.querySelector(".translate-status");
+
+  _trInitPaddle(statusEl)
+    .then(() => {
+      if (statusEl) statusEl.textContent = "OCR ready — scanning...";
+      setTimeout(() => {
+        const s = _trOverlay.querySelector(".translate-status");
+        if (s && s.textContent === "OCR ready — scanning...") s.remove();
+      }, 2000);
+    })
+    .catch((e) => {
+      console.error("PaddleOCR init failed:", e);
+      if (statusEl) statusEl.textContent = "OCR failed to load";
+    });
+
+  (async () => {
+    if ("Translator" in self) {
+      try {
+        _trTranslator = await Translator.create({
+          sourceLanguage: "de",
+          targetLanguage: "en",
+        });
+      } catch (e) {
+        console.log("Chrome Translator API not available:", e);
+      }
+    }
+  })();
+
+  return true;
+}
+
+function showTranslateFilter() {
+  _trResults = null;
+  _trResultsDirty = false;
+  _trLastOcrTime = 0;
+  _trLastMoveTime = 0;
+  _trPrevX = null;
+  _trPrevY = null;
+  _trCache.clear();
+  _trCacheVersion = 0;
+  _trRenderedCacheVersion = 0;
+  if (_trBoxContainer) _trBoxContainer.innerHTML = "";
+}
+
+function hideTranslateFilter() {
+  if (_trBoxContainer) _trBoxContainer.innerHTML = "";
+  _trResults = null;
+  _trResultsDirty = false;
+}
+
+function _trTriggerOcr(sourceCanvas, displayX, displayY, dpr) {
+  if (!_trReady || _trBusy) return;
+
+  const now = performance.now();
+
+  // Skip OCR while the window is still moving.
+  if (_trPrevX !== null && (displayX !== _trPrevX || displayY !== _trPrevY)) {
+    _trLastMoveTime = now;
+  }
+  _trPrevX = displayX;
+  _trPrevY = displayY;
+  if (now - _trLastMoveTime < TR_MOVE_SETTLE_MS) return;
+
+  const timeSince = now - _trLastOcrTime;
+  const dist = Math.hypot(displayX - _trLastOcrX, displayY - _trLastOcrY);
+
+  const shouldRun =
+    _trLastOcrTime === 0 ||
+    (timeSince > TR_OCR_COOLDOWN && dist > TR_OCR_MOVE_THRESHOLD) ||
+    timeSince > TR_OCR_FORCE_INTERVAL;
+
+  if (!shouldRun) return;
+
+  _trBusy = true;
+
+  const sx = displayX * dpr;
+  const sy = displayY * dpr;
+  const sw = window.innerWidth * dpr;
+  const sh = window.innerHeight * dpr;
+
+  const scale = Math.min(1, TR_OCR_MAX_WIDTH / (sw / dpr));
+  const ocrW = Math.round((sw / dpr) * scale);
+  const ocrH = Math.round((sh / dpr) * scale);
+
+  _trFeedCanvas.width = ocrW;
+  _trFeedCanvas.height = ocrH;
+  _trFeedCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, ocrW, ocrH);
+
+  _trOcrW = ocrW;
+  _trOcrH = ocrH;
+
+  console.log("OCR: running on", ocrW, "x", ocrH, "canvas");
+  _trOcrInstance
+    .ocr(_trFeedCanvas)
+    .then((result) => {
+      console.log("OCR result:", result);
+      _trResults = result;
+      _trResultsDirty = true;
+      _trLastOcrX = displayX;
+      _trLastOcrY = displayY;
+      _trLastOcrTime = performance.now();
+      _trBusy = false;
+
+      _trTranslateResults(result);
+    })
+    .catch((e) => {
+      console.error("OCR failed:", e);
+      _trBusy = false;
+    });
+}
+
+function _trTranslateResults(result) {
+  if (!_trTranslator || !result || !result.src) return;
+
+  for (const item of result.src) {
+    const text = item.text.trim();
+    if (!text || !_trIsText(text) || _trCache.has(text)) continue;
+
+    _trTranslator
+      .translate(text)
+      .then((translated) => {
+        _trCache.set(text, translated);
+        _trCacheVersion++;
+      })
+      .catch(() => {});
+  }
+}
+
+function _trRebuildBoxes() {
+  if (!_trBoxContainer || !_trResults || !_trResults.src) return;
+
+  const iw = window.innerWidth;
+  const ih = window.innerHeight;
+  const ocrW = _trOcrW || 1;
+  const ocrH = _trOcrH || 1;
+
+  let html = "";
+
+  for (const item of _trResults.src) {
+    if (item.mean < TR_CONFIDENCE_MIN) continue;
+    const text = item.text.trim();
+    if (!text || !_trIsText(text)) continue;
+
+    const r = _trQuadToRect(item.box, ocrW, ocrH, iw, ih);
+    const ocrSize = Math.max(8, Math.min(r.boxH * 0.75, 32));
+    // const fontSize = Math.round((14 + ocrSize) / 2);
+
+    const fontSize = 20 * (1 / 3) + ocrSize * (2 / 3);
+
+    const extraTranslateBoxPadding = 6;
+
+    const displayText = _trCache.get(text) || text;
+    const escaped = displayText
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+    html += `<div class="translate-box" style="left:${r.left - extraTranslateBoxPadding}px;top:${r.top - extraTranslateBoxPadding}px;width:${r.width + extraTranslateBoxPadding * 2}px;height:${r.height + extraTranslateBoxPadding * 2}px;font-size:${fontSize}px;">${escaped}</div>`;
+  }
+
+  _trBoxContainer.innerHTML = html;
+  _trResultsDirty = false;
+  _trRenderedCacheVersion = _trCacheVersion;
+}
+
+function renderTranslateFrame(sourceCanvas, displayX, displayY, dpr) {
+  _trTriggerOcr(sourceCanvas, displayX, displayY, dpr);
+
+  if (_trResultsDirty || _trCacheVersion !== _trRenderedCacheVersion) {
+    _trRebuildBoxes();
+  }
+
+  if (_trBoxContainer && _trResults) {
+    const dx = -(displayX - _trLastOcrX);
+    const dy = -(displayY - _trLastOcrY);
+    _trBoxContainer.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+}
+
+// OCR Debug filter (localhost only) — reuses PaddleOCR engine
+
+let _dbgOverlay = null;
+let _dbgBoxContainer = null;
+let _dbgLastResultsRef = null;
+
+function initOcrDebugFilter(overlayEl) {
+  _dbgOverlay = overlayEl;
+  _dbgBoxContainer = document.createElement("div");
+  _dbgBoxContainer.style.cssText =
+    "position:absolute;top:0;left:0;width:100%;height:100%;will-change:transform";
+  _dbgOverlay.appendChild(_dbgBoxContainer);
+
+  if (!_trFeedCanvas) {
+    _trFeedCanvas = document.createElement("canvas");
+    _trFeedCtx = _trFeedCanvas.getContext("2d");
+  }
+  if (!_trReady) {
+    _dbgOverlay.insertAdjacentHTML(
+      "beforeend",
+      '<div class="translate-status">Loading OCR engine...</div>',
+    );
+    const statusEl = _dbgOverlay.querySelector(".translate-status");
+    _trInitPaddle(statusEl)
+      .then(() => {
+        if (statusEl) statusEl.remove();
+      })
+      .catch((e) => {
+        console.error("PaddleOCR init failed:", e);
+      });
+  }
+
+  return true;
+}
+
+function showOcrDebugFilter() {
+  _dbgLastResultsRef = null;
+  if (_dbgBoxContainer) _dbgBoxContainer.innerHTML = "";
+  _trLastOcrTime = 0;
+  _trLastMoveTime = 0;
+  _trPrevX = null;
+  _trPrevY = null;
+}
+
+function hideOcrDebugFilter() {
+  if (_dbgBoxContainer) _dbgBoxContainer.innerHTML = "";
+  _dbgLastResultsRef = null;
+}
+
+function _dbgRebuildBoxes() {
+  if (!_dbgBoxContainer || !_trResults || !_trResults.src) return;
+
+  const iw = window.innerWidth;
+  const ih = window.innerHeight;
+  const ocrW = _trOcrW || 1;
+  const ocrH = _trOcrH || 1;
+
+  let html = "";
+
+  for (const item of _trResults.src) {
+    const r = _trQuadToRect(item.box, ocrW, ocrH, iw, ih);
+    const text = item.text.trim();
+
+    // Quadrilateral outline via SVG
+    const pts = item.box
+      .map((p) => `${(p[0] / ocrW) * iw},${(p[1] / ocrH) * ih}`)
+      .join(" ");
+    html += `<svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible"><polygon points="${pts}" fill="none" stroke="rgba(255,0,0,0.7)" stroke-width="1"/></svg>`;
+
+    // Label
+    html += `<div class="ocr-debug-label" style="left:${r.left}px;top:${r.top - 10}px">c:${item.mean.toFixed(2)} "${text.substring(0, 60)}"</div>`;
+  }
+
+  _dbgBoxContainer.innerHTML = html;
+  _dbgLastResultsRef = _trResults;
+}
+
+function renderOcrDebugFrame(sourceCanvas, displayX, displayY, dpr) {
+  _trTriggerOcr(sourceCanvas, displayX, displayY, dpr);
+
+  if (_trResults !== _dbgLastResultsRef) {
+    _dbgRebuildBoxes();
+  }
+
+  if (_dbgBoxContainer && _trResults) {
+    const dx = -(displayX - _trLastOcrX);
+    const dy = -(displayY - _trLastOcrY);
+    _dbgBoxContainer.style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+}
